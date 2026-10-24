@@ -24,6 +24,9 @@ a module, and update the spec when a decision changes.
   its `query_id`. Results must be JSON-serializable and must not depend on the wall clock.
 - `tests/`: `conftest.py` has `FakeConnector`, an example connector, `ScriptedConnector`
   for custom fixtures, and fixtures.
+- `evals/`: synthetic histories with planted facts (SPEC §10.1). Format and commands in
+  `evals/README.md`; `connectors/synthetic.py` loads them. Regenerate the committed sample
+  after changing the generator, or `test_committed_sample_is_reproducible` fails.
 
 ## Rules
 

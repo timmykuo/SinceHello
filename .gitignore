@@ -12,3 +12,6 @@ dist/
 *.db-shm
 .sincehello/
 imports/
+
+# Generated synthetic histories (the committed sample lives in evals/samples/)
+synthetic/

@@ -477,6 +477,15 @@ partial report once the projected spend crosses it. The cost-per-run is recorded
     ratio matters.
   - Output goes into the same normalized schema through a `synthetic` connector, so the
     full pipeline runs unchanged.
+- **Implementation (M3):** an offline, seeded generator builds the full history
+  (timestamps, senders, planted facts, filler with per-person sleep and reply rhythms).
+  The Claude generator is an optional second pass that rewrites only filler text era
+  by era, with planted lines locked, so ground truth is identical either way and tests
+  never need an API key. Scenarios are JSON in `evals/scenarios/`; each history is a
+  directory with `messages.jsonl` and `manifest.json` (planted facts with exact message
+  ids, dates, senders, counts). Histories include group-chat and reaction traps (an
+  earlier "love you" only in the group chat, reactions quoting planted phrases) and
+  near-miss decoys. Format and definitions: `evals/README.md`.
 - **Metrics:**
   - Recall of planted facts (did an insight capture it?)
   - Exactness: date, sender, and value correct
