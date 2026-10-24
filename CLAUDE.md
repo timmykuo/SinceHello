@@ -22,7 +22,13 @@ a module, and update the spec when a decision changes.
 - `sincehello/analysis/`: the deterministic stats engine (SPEC §7.1). Register stats with
   `@stat(...)` in `stats.py`; keyword-only arguments are the stat's parameters and feed
   its `query_id`. Results must be JSON-serializable and must not depend on the wall clock.
-- `tests/`: `conftest.py` has `FakeConnector`, an example connector, `ScriptedConnector`
+- `sincehello/agent/`: the discovery agent (SPEC §7.4–7.5): `tools.py` (tools + strict
+  schemas), `loop.py` (the manual loop), `budget.py`, `runlog.py`, `prompts/`. Keep
+  `prompts/system.md` free of run-specific text so the cached prefix stays byte-stable.
+  `verify/checks.py` has the deterministic insight checks; `report/schema.py` the
+  `report.json` models.
+- `tests/`: `fake_anthropic.py` has `ScriptedClient`, the offline stand-in for the API
+  client; tests must never call the real API. `conftest.py` has `FakeConnector`, an example connector, `ScriptedConnector`
   for custom fixtures, and fixtures.
 - `evals/`: synthetic histories with planted facts (SPEC §10.1). Format and commands in
   `evals/README.md`; `connectors/synthetic.py` loads them. Regenerate the committed sample

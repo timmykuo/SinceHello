@@ -161,3 +161,98 @@ def synth_generate(
         f" {s['dm_reactions']} reactions, {s['group_messages']} group),"
         f" {len(manifest['facts'])} planted facts -> {out}"
     )
+
+
+def _anthropic_client():
+    """The real API client. Tests replace this with a scripted fake."""
+    import anthropic
+
+    return anthropic.Anthropic()
+
+
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def _check_effort(effort: str) -> None:
+    if effort not in EFFORTS:
+        typer.echo(f"--effort must be one of {', '.join(EFFORTS)}", err=True)
+        raise typer.Exit(1)
+
+
+def _print_run(result) -> None:
+    run = result.report.run
+    typer.echo(
+        f"{run.status}: {len(result.report.insights)} insights in {run.turns} turns,"
+        f" ${run.cost_usd:.4f}, {run.messages_shared} messages shared ({run.pct_shared}%)"
+    )
+    for note in result.notes:
+        typer.echo(f"note: {note}", err=True)
+    typer.echo(f"run output: {result.run_dir}")
+
+
+@app.command()
+def analyze(
+    person_id: Annotated[int, typer.Argument(help="Person id, from `sincehello people`.")],
+    max_cost: Annotated[float, typer.Option(help="Hard spending cap for this run, USD.")] = 5.0,
+    model: Annotated[str, typer.Option(help="Model for the discovery agent.")] = "claude-opus-5-5",
+    effort: Annotated[str, typer.Option(help="low | medium | high | xhigh | max.")] = "high",
+    max_turns: Annotated[int, typer.Option(help="Turn cap for the agent loop.")] = 60,
+    tz: Annotated[str | None, typer.Option(help="Timezone for people with no tz periods.")] = None,
+) -> None:
+    """Run the discovery agent (Claude) on one person. Writes ~/.sincehello/runs/<run_id>/."""
+    from sincehello.agent import AgentConfig, run_agent
+    from sincehello.agent.runlog import new_run_id, runs_dir
+
+    _check_effort(effort)
+    config_ = AgentConfig(
+        model=model, effort=effort, max_cost=max_cost, max_turns=max_turns, default_tz=tz
+    )
+    with Store(config.store_path()) as store:
+        if person_id not in {p.person_id for p in store.people()}:
+            typer.echo(f"unknown person {person_id} (see `sincehello people`)", err=True)
+            raise typer.Exit(1)
+        run_dir = runs_dir() / new_run_id(person_id)
+        result = run_agent(store, person_id, _anthropic_client(), config_, run_dir)
+    _print_run(result)
+
+
+eval_app = typer.Typer(help="Evals (SPEC.md §10). These call Claude and cost money.")
+app.add_typer(eval_app, name="eval")
+
+
+@eval_app.command("agent")
+def eval_agent(
+    sample: Annotated[str, typer.Option(help="Sample under evals/samples/.")] = "bean-goose",
+    max_cost: Annotated[float, typer.Option(help="Hard spending cap, USD.")] = 5.0,
+    model: Annotated[str, typer.Option(help="Model for the discovery agent.")] = "claude-opus-5-5",
+    effort: Annotated[str, typer.Option(help="low | medium | high | xhigh | max.")] = "high",
+    max_turns: Annotated[int, typer.Option(help="Turn cap for the agent loop.")] = 60,
+) -> None:
+    """Run the agent on a synthetic sample and score recall of its planted facts."""
+    import tempfile
+
+    from evals import agent_recall, generator
+    from sincehello.agent import AgentConfig, run_agent
+    from sincehello.agent.runlog import new_run_id, runs_dir
+    from sincehello.connectors.synthetic import SAMPLE_DIR, SyntheticConnector
+
+    _check_effort(effort)
+    path = SAMPLE_DIR.parent / sample
+    if not (path / "manifest.json").is_file():
+        typer.echo(f"no sample {sample!r} in {SAMPLE_DIR.parent}", err=True)
+        raise typer.Exit(1)
+    records, manifest = generator.read(path)
+    config_ = AgentConfig(model=model, effort=effort, max_cost=max_cost, max_turns=max_turns)
+    with tempfile.TemporaryDirectory() as tmp, Store(Path(tmp) / "eval.db") as store:
+        SyntheticConnector(path).ingest(store)
+        person_id = store.person_for_handle("synthetic", manifest["participants"]["them"]["handle"])
+        run_dir = runs_dir() / f"{new_run_id(person_id)}-eval-{sample}"
+        result = run_agent(store, person_id, _anthropic_client(), config_, run_dir)
+    insights = [i.model_dump() for i in result.report.insights]
+    scored = agent_recall.score(manifest, records, insights)
+    (run_dir / "eval.json").write_text(json.dumps(scored, indent=2))
+    _print_run(result)
+    for f in scored["facts"]:
+        mark = "x" if f["found"] else " "
+        typer.echo(f"  [{mark}] {f['id']:<16} {f['type']:<16} {', '.join(f['insights'])}")
+    typer.echo(f"recall {scored['found']}/{scored['total']} ({scored['recall']:.0%})")

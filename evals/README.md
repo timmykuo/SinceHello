@@ -51,7 +51,7 @@ generator decided (times, senders, flags, planted messages) and asks Claude
 text, era by era, in chunks of 120 lines with planted lines shown as locked context.
 Rewritten lines that are multi-line, too long, or match a reserved term fall back to the
 offline text, then the manifest is recomputed and must equal the offline one. Needs
-`uv sync --extra llm` and an API key; costs roughly one request per 120 lines (use
+an API key; costs roughly one request per 120 lines (use
 `--max-chunks` for a trial). Refusals and truncated responses keep the offline text.
 
 ## `messages.jsonl`

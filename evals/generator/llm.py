@@ -8,7 +8,7 @@ length, no reserved terms) and falls back to the offline text when it fails, so 
 manifest's facts are identical to the offline run. ``rewrite`` recomputes and
 re-validates the manifest to prove it.
 
-Needs the ``llm`` extra (``uv sync --extra llm``) and an ``ANTHROPIC_API_KEY`` (or an
+Needs an ``ANTHROPIC_API_KEY`` (or an
 ``ant auth login`` profile). Cost scales with history size: roughly one request per
 120 lines; use ``max_chunks`` to cap a trial run.
 """
