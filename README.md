@@ -10,6 +10,8 @@ Status: early scaffold. See [`SPEC.md`](SPEC.md) for the design.
 uv sync
 uv run sincehello connect      # list connectors
 uv run sincehello people       # people by message count
+uv run sincehello merge 12 someone@example.com   # fold a handle into person 12
+uv run sincehello me me@example.com              # mark your own handle
 uv run pytest
 ```
 

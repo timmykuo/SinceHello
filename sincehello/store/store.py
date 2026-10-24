@@ -147,6 +147,12 @@ class Store:
                 added += cur.rowcount
         return seen, added
 
+    def resolve_identities(self) -> int:
+        """Run the automatic merges (SPEC.md §6). Returns how many handles moved."""
+        from sincehello.store.identity import auto_merge
+
+        return auto_merge(self)
+
     def get_cursor(self, source: str) -> str | None:
         row = self.conn.execute("SELECT cursor FROM sync_state WHERE source = ?", (source,))
         found = row.fetchone()
@@ -164,7 +170,10 @@ class Store:
     # --- reads --------------------------------------------------------------
 
     def people(self) -> list[PersonSummary]:
-        """Everyone except me, by message count in 1:1 conversations (SPEC.md §1)."""
+        """Everyone except me, by message count in 1:1 conversations (SPEC.md §1).
+
+        A person's count covers every 1:1 conversation with any of their handles.
+        """
         rows = self.conn.execute(
             """
             SELECT p.id, p.display_name,
@@ -172,9 +181,11 @@ class Store:
                        AS handles,
                    (SELECT count(*) FROM message m
                       JOIN conversation c ON c.id = m.conversation_id AND c.is_group = 0
-                      JOIN conversation_member cm ON cm.conversation_id = c.id
-                      JOIN handle h ON h.id = cm.handle_id AND h.person_id = p.id
-                     WHERE m.is_reaction = 0) AS message_count
+                     WHERE m.is_reaction = 0
+                       AND EXISTS (SELECT 1 FROM conversation_member cm
+                                     JOIN handle h ON h.id = cm.handle_id
+                                    WHERE cm.conversation_id = c.id AND h.person_id = p.id)
+                   ) AS message_count
               FROM person p
              WHERE p.is_me = 0
              ORDER BY message_count DESC, p.id
