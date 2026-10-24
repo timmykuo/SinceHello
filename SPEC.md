@@ -26,7 +26,8 @@ The product goal is a fun, accurate "Wrapped" for one relationship.
 | Agent loop | **Hand-written manual loop.** |
 | Report voice | **Second person**: "you" and the other person's name, e.g. "You and Alex…". |
 | Run-to-run variation | **Fine for runs to differ.** We can experiment with determinism later. |
-| Timezones | **Relative, per sender** (§6.1): stats use each sender's local time, with cross-timezone insights for long-distance stretches. |
+| Timezones | **Relative, per sender** (§6.1). Periods are inferred and suggested for the user to confirm, and nobody has to remember dates. The default is the Mac's timezone. |
+| Languages | **English only** in v1. Mixed-language support is a later phase. |
 | Critic model | **Opus 5.5 to start**, then try a cheaper model and let evals decide. |
 | LLM | **Claude API.** |
 | Data sent to Claude | **Snippets only**, fetched through agent tools, plus computed stats. A bulk "deep mode" is a later opt-in. |
@@ -205,18 +206,40 @@ The goal: **one Person = every handle, on every app, that belongs to the same hu
 ### 6.1 Timezone timeline (per person)
 
 Each person (you **and** them) gets their own timeline of timezone periods. Every
-message is then viewed in **the sender's local time**, and the other person's local
-time is still available for cross-timezone insights.
+message is viewed in **the sender's local time**, and the other person's local time
+is still available for cross-timezone insights.
 
-- Default: everyone is in the Mac's current timezone for all time.
-- The user can add periods ("Alex: Asia/Tokyo, 2022-06 → 2023-08").
-- Stats are computed against the sender's own local clock. "Alex texts at 2am" means
-  2am Alex time.
-- This unlocks cross-timezone insights for long-distance eras. For example: "During
-  the Tokyo year, your 7am good-morning texts landed at 11pm for Alex", "you
-  stayed up until 1am your time to catch their lunch break", and "the overlap window
-  you both lived in".
-- How periods get filled in beyond manual entry is an open question (§15).
+**Zero-input by default.** Nobody is asked to remember where they were. Everyone
+starts in the Mac's current timezone, and the tool only asks a question when it
+detects something.
+
+**Inference: suggest periods, then the user confirms them.** Recognizing a
+suggestion is easier than recalling dates.
+1. *Sleep-window detection (local):* for each person, compute the daily quiet window
+   over rolling 14-day spans from a circular histogram of send hours. The midpoint
+   of that window is roughly the middle of their night.
+2. *Shift detection:* a midpoint shift of ≥ 3h that lasts ≥ 7 days becomes a candidate
+   period, with offset ≈ shift. Shorter trips are ignored.
+3. *Naming (agent):* the agent searches messages near each period's boundaries for
+   place and travel mentions ("landed", "flight", city names) and attaches the best guess.
+4. *Confirm:* a single prompt per candidate, e.g. "Looks like Alex was about 9h ahead
+   from Jun 3 to Aug 20, 2022 (they mentioned 'Tokyo' on Jun 3). Correct / edit /
+   ignore?" Periods the user ignores are dropped. Unconfirmed suggestions are used only
+   if their confidence is high, and they are labeled as inferred in the report.
+
+Known failure modes: shift work, exam all-nighters, and sparse data. Each of these
+gives low confidence, and low-confidence suggestions are never used silently.
+
+**Cross-timezone insights only fire when a period differs by ≥ 3h for ≥ 4 weeks.**
+For most pairs who live in the same place, this whole feature stays invisible. It
+just keeps the late-night stats correct.
+
+Examples of what it unlocks:
+- "Alex stayed up past 2am their time 47 times to talk to you."
+- "Your good-morning texts landed at 11pm for Alex during the Tokyo year."
+- "Your overlap window: 7–10am for you, 9pm–midnight for them."
+- "The reunion": the day both timelines converge again, and what you texted.
+- "You texted from 4 timezones."
 
 ---
 
@@ -525,17 +548,15 @@ Key libraries: `anthropic`, `pydantic`, `typer`, `ruptures`, `sqlite3`/FTS5, `py
 4. **M4 — Discovery agent (LOOP 1):** tools, manual loop, budget guard, egress log.
 5. **M5 — Verification (LOOP 2):** deterministic checks plus critic, and the revise loop.
 6. **M6 — Curation plus final report;** human rater; LLM judge calibrated against my ratings.
-7. **M7 — Iterate:** tune prompts, effort, and tools against the evals.
-8. **Later:** guided connectors (Instagram, Messenger, WhatsApp), TypeScript story-card UI,
-   image export, bulk "deep mode", reactions and images, year-in-review mode.
+7. **M7 — Timezone inference:** sleep-window shift detection, agent naming, confirm
+   flow, cross-timezone insights. Synthetic scenarios get a planted long-distance era.
+8. **M8 — Iterate:** tune prompts, effort, and tools against the evals.
+9. **Later:** guided connectors (Instagram, Messenger, WhatsApp), TypeScript story-card UI,
+   image export, bulk "deep mode", reactions and images, year-in-review mode,
+   group chats, mixed-language support (stopwords, lexicons, CJK segmentation, trigram FTS).
 
 ---
 
 ## 15. Open questions
 
-1. **Filling in timezone periods:** manual entry only, or also auto-suggestions that
-   you confirm? Suggestions could come from (a) shifts in each person's daily quiet
-   or sleep window, and (b) mentions like "just landed in Tokyo" found by the agent.
-2. **Languages:** which languages do you text in? This decides how much local
-   tokenizer, search, and lexicon work is needed. The LLM parts handle mixed language
-   natively; the local parts (word counts, search, lexicons) are what need work.
+None blocking right now. New ones get added here as they come up during the build.
