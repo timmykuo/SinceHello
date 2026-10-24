@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 
 from sincehello.connectors import registry
-from sincehello.connectors.imessage import IMessageConnector, apple_time, is_tapback
+from sincehello.connectors.imessage import (
+    DEFAULT_DB,
+    IMessageConnector,
+    apple_time,
+    is_tapback,
+    load_cursors,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "imessage"
 NS = 10**9
@@ -137,7 +143,7 @@ def test_handles_are_not_merged(store, chat_db):
 
 def test_reingest_is_idempotent_and_incremental(store, chat_db):
     ingest(store, chat_db)
-    assert store.get_cursor("imessage") == "11"
+    assert load_cursors(store.get_cursor("imessage")) == {str(chat_db.resolve()): 11}
     assert ingest(store, chat_db).messages_added == 0
 
     db = sqlite3.connect(chat_db)
@@ -146,7 +152,7 @@ def test_reingest_is_idempotent_and_incremental(store, chat_db):
     db.close()
     report = ingest(store, chat_db)
     assert (report.messages_seen, report.messages_added) == (1, 1)
-    assert store.get_cursor("imessage") == "12"
+    assert load_cursors(store.get_cursor("imessage")) == {str(chat_db.resolve()): 12}
 
 
 def test_reinserted_guid_is_deduped(store, chat_db):
@@ -193,3 +199,31 @@ def test_check_permission_denied(tmp_path, monkeypatch):
 def test_db_path_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SINCEHELLO_IMESSAGE_DB", str(tmp_path / "other.db"))
     assert IMessageConnector().db_path == tmp_path / "other.db"
+
+
+def test_second_database_has_its_own_cursor(store, chat_db, tmp_path):
+    """An old backup has lower ROWIDs; the main DB's cursor must not skip it."""
+    ingest(store, chat_db)
+    old = tmp_path / "old" / "sms.db"
+    old.parent.mkdir()
+    db = sqlite3.connect(old)
+    db.executescript(CHAT_DB_SCHEMA)
+    db.execute("INSERT INTO handle VALUES (1, ?, 'iMessage')", (ALEX_PHONE,))
+    db.execute("INSERT INTO chat VALUES (1, 'iMessage;-;+15550001111', 45, ?)", (ALEX_PHONE,))
+    db.execute("INSERT INTO chat_handle_join VALUES (1, 1)")
+    add_message(db, 1, 1, guid="old-1", date=600_000_000 * NS, text="years ago")
+    add_message(db, 2, 1, guid="msg-1", text="hi it's alex")  # also in the main DB
+    db.commit()
+    db.close()
+    report = ingest(store, old)
+    assert (report.messages_seen, report.messages_added) == (2, 1)
+    assert ingest(store, chat_db).messages_added == 0
+    assert set(load_cursors(store.get_cursor("imessage"))) == {
+        str(chat_db.resolve()),
+        str(old.resolve()),
+    }
+
+
+def test_legacy_integer_cursor_maps_to_default_db():
+    assert load_cursors("291512") == {str(DEFAULT_DB.resolve()): 291512}
+    assert load_cursors(None) == {}

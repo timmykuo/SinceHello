@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -29,7 +30,7 @@ DB_ENV = "SINCEHELLO_IMESSAGE_DB"  # read another chat.db (old Mac) or sms.db (i
 DEFAULT_DB = Path.home() / "Library" / "Messages" / "chat.db"
 
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=UTC)
-ATTACHMENT_CHAR = "￼"
+ATTACHMENT_CHAR = "\ufffc"
 # chat.style values; anything else falls back to the member count.
 STYLE_GROUP = 43
 STYLE_DIRECT = 45
@@ -55,6 +56,15 @@ def clean_text(text: str | None) -> tuple[str | None, bool]:
     had_attachment = ATTACHMENT_CHAR in text
     stripped = text.replace(ATTACHMENT_CHAR, "").strip()
     return (stripped or None), had_attachment
+
+
+def load_cursors(raw: str | None) -> dict[str, int]:
+    """Parse the stored cursor: {db path: max ROWID}. A bare integer means the default DB."""
+    if not raw:
+        return {}
+    if raw.isdigit():
+        return {str(DEFAULT_DB.resolve()): int(raw)}
+    return {path: int(rowid) for path, rowid in json.loads(raw).items()}
 
 
 class IMessageConnector:
@@ -112,7 +122,11 @@ class IMessageConnector:
                 conn.close()
 
     def ingest(self, store: Store) -> IngestReport:
-        cursor = int(store.get_cursor(self.id) or 0)
+        # ROWIDs are only comparable within one database, so keep a cursor per database path
+        # (e.g. this Mac's chat.db plus an old iPhone backup). Guids dedupe across them.
+        cursors = load_cursors(store.get_cursor(self.id))
+        key = str(self.db_path.resolve())
+        cursor = cursors.get(key, 0)
         with self.snapshot() as db:
             reader = _Reader(db)
             report = write_batch(
@@ -124,7 +138,8 @@ class IMessageConnector:
             )
             report.warnings.extend(reader.warnings())
             if reader.max_rowid > cursor:
-                store.set_cursor(self.id, str(reader.max_rowid))
+                cursors[key] = reader.max_rowid
+                store.set_cursor(self.id, json.dumps(cursors, sort_keys=True))
         return report
 
 

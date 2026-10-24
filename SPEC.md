@@ -145,11 +145,16 @@ knows which app a message came from except through the `source` field.
   - On newer macOS, `message.text` is often NULL and the text lives in the
     `attributedBody` blob (an NSAttributedString typedstream), so we need a decoder.
     This is the riskiest part of the connector and needs tests against real samples.
-  - **Tapbacks** (`associated_message_type` 2000–2006 and 3000–3006) are stored as
+  - **Tapbacks** (`associated_message_type` 2000–2007 and 3000–3007; 2006 is an emoji
+    reaction and 2007 a sticker tapback on newer OSes) are stored as
     messages like `Loved "…"`. Since v1 is text-only, store them flagged
     `is_reaction=1` and **exclude them from text analysis**, or "Loved" becomes
     the top word.
   - Edited and unsent messages (macOS 13+): keep the final text and set an `edited` flag.
+  - **Group vs. 1:1:** `chat.style` 45 = 1:1 and 43 = group, verified on a real DB (every
+    style-45 chat had exactly one other member; style-43 chats had 1–N, since a group can
+    shrink). Unknown styles fall back to member count > 1.
+  - Rows with `item_type != 0` (renames, member changes) are system events and are skipped.
   - **1:1 only (v1):** ingest every conversation, but analysis uses only conversations
     where `conversation.is_group = 0`. Group chats are stored for later use.
   - `is_from_me` gives the sender direction. In 1:1 chats the other sender comes from `handle_id`.
@@ -163,7 +168,9 @@ knows which app a message came from except through the `source` field.
   `ROWID`. iCloud sync can re-insert or merge rows under new ROWIDs, and dedupe has to
   survive that.
 - **Incremental sync:** remember the max `ROWID` ingested and only pull newer rows next time.
-  The ROWID is only a cursor; dedupe relies on the guid.
+  The ROWID is only a cursor; dedupe relies on the guid. ROWIDs are only comparable within one
+  database, so the cursor is a JSON map of `{database path: max ROWID}`; ingesting an old
+  backup after this Mac's `chat.db` reads all of it, and guids dedupe the overlap.
 
 ### 4.3 Guided connectors (later phases, designed now)
 
