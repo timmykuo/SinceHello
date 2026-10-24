@@ -42,10 +42,14 @@ CREATE TABLE message (
     is_reaction      INTEGER NOT NULL DEFAULT 0,
     has_attachment   INTEGER NOT NULL DEFAULT 0,
     edited           INTEGER NOT NULL DEFAULT 0,
+    reacts_to_source_msg_id TEXT,              -- reactions: target's source_msg_id (no FK;
+                                               -- the target may arrive later or never)
+    reaction_kind    TEXT,                     -- love | like | dislike | laugh | ...
     UNIQUE (source, source_msg_id)
 );
 
 CREATE INDEX message_conv_time ON message (conversation_id, sent_at_utc);
+CREATE INDEX message_reacts_to ON message (source, reacts_to_source_msg_id);
 
 -- Full-text search over message text, kept in sync by triggers.
 CREATE VIRTUAL TABLE message_fts USING fts5 (

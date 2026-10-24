@@ -12,7 +12,17 @@ from pathlib import Path
 
 from sincehello.connectors.base import ConversationRecord, HandleRecord, MessageRecord
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# version -> SQL that upgrades a store from that version to the next one.
+# schema.sql always holds the latest full schema, used for new stores.
+MIGRATIONS = {
+    1: """
+        ALTER TABLE message ADD COLUMN reacts_to_source_msg_id TEXT;
+        ALTER TABLE message ADD COLUMN reaction_kind TEXT;
+        CREATE INDEX message_reacts_to ON message (source, reacts_to_source_msg_id);
+    """,
+}
 ME_PERSON_ID = 1
 
 
@@ -53,11 +63,17 @@ class Store:
         (version,) = self.conn.execute("PRAGMA user_version").fetchone()
         if version == SCHEMA_VERSION:
             return
-        if version != 0:
-            raise RuntimeError(f"unsupported schema version {version}")
-        sql = resources.files("sincehello.store").joinpath("schema.sql").read_text()
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"store schema v{version} is newer than this code (v{SCHEMA_VERSION})"
+            )
         with self.conn:
-            self.conn.executescript(sql)
+            if version == 0:
+                sql = resources.files("sincehello.store").joinpath("schema.sql").read_text()
+                self.conn.executescript(sql)
+            else:
+                for v in range(version, SCHEMA_VERSION):
+                    self.conn.executescript(MIGRATIONS[v])
             self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     # --- writes -------------------------------------------------------------
@@ -117,6 +133,10 @@ class Store:
                     if conv_id is None:
                         raise ValueError(f"unknown conversation {ck}; upsert it first")
                     conv_ids[ck] = conv_id
+                if not m.is_reaction and (m.reacts_to or m.reaction_kind):
+                    raise ValueError(
+                        f"message {m.source_msg_id} has reaction fields but is_reaction=False"
+                    )
                 sender_id = None
                 if not m.is_from_me:
                     if m.sender is None:
@@ -130,7 +150,8 @@ class Store:
                 cur = self.conn.execute(
                     "INSERT OR IGNORE INTO message (source, source_msg_id, conversation_id,"
                     " sender_handle_id, is_from_me, sent_at_utc, text, is_reaction,"
-                    " has_attachment, edited) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " has_attachment, edited, reacts_to_source_msg_id, reaction_kind)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         m.source,
                         m.source_msg_id,
@@ -142,6 +163,8 @@ class Store:
                         int(m.is_reaction),
                         int(m.has_attachment),
                         int(m.edited),
+                        m.reacts_to,
+                        m.reaction_kind,
                     ),
                 )
                 added += cur.rowcount
@@ -189,6 +212,14 @@ class Store:
             )
             for r in rows
         ]
+
+    def reactions_to(self, source: str, source_msg_id: str) -> list[sqlite3.Row]:
+        """Reactions pointing at one message, oldest first."""
+        return self.conn.execute(
+            "SELECT * FROM message WHERE source = ? AND reacts_to_source_msg_id = ?"
+            " ORDER BY sent_at_utc",
+            (source, source_msg_id),
+        ).fetchall()
 
     def search(self, query: str, limit: int = 25) -> list[sqlite3.Row]:
         return self.conn.execute(

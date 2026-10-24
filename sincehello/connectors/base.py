@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 
 ConnectorKind = Literal["automatic", "guided"]
 StatusState = Literal["ready", "needs_setup", "error"]
+# Normalized reaction kinds. iMessage tapbacks map onto the first six.
+ReactionKind = Literal[
+    "love", "like", "dislike", "laugh", "emphasize", "question", "emoji", "other"
+]
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,10 @@ class MessageRecord:
     is_reaction: bool = False
     has_attachment: bool = False
     edited: bool = False
+    # Reactions only (is_reaction=True): the source_msg_id of the message reacted to, which
+    # may not be ingested yet. A reaction that was later removed should not be emitted.
+    reacts_to: str | None = None
+    reaction_kind: ReactionKind | None = None
 
 
 @dataclass(frozen=True)

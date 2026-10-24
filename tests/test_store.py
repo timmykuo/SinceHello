@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-from conftest import FakeConnector, msg
+from conftest import FakeConnector, default_messages, msg
 
 from sincehello.connectors import Connector, MessageRecord
 from sincehello.store import Store
+from sincehello.store.store import SCHEMA_VERSION
 
 
 def test_fake_connector_satisfies_protocol():
@@ -65,3 +66,47 @@ def test_reopen_keeps_data(tmp_path):
         FakeConnector().ingest(s)
     with Store(path) as s:
         assert len(s.people()) == 2
+
+
+def test_reaction_links_to_target(store):
+    FakeConnector().ingest(store)
+    [reaction] = store.reactions_to("fake", "3")
+    assert reaction["source_msg_id"] == "4"
+    assert reaction["reaction_kind"] == "love"
+    assert store.reactions_to("fake", "1") == []
+
+
+def test_reaction_fields_require_is_reaction(store):
+    FakeConnector(messages=[]).ingest(store)
+    bad = msg(9, "c-alex", True, "hi", reacts_to="1")
+    with pytest.raises(ValueError, match="is_reaction=False"):
+        store.add_messages([bad])
+
+
+def test_migrates_v1_store(tmp_path):
+    path = tmp_path / "old.db"
+    with Store(path) as s:
+        FakeConnector(messages=default_messages()[:3]).ingest(s)
+        # Turn this into a v1 store: no reaction columns.
+        s.conn.executescript(
+            """
+            DROP INDEX message_reacts_to;
+            ALTER TABLE message DROP COLUMN reacts_to_source_msg_id;
+            ALTER TABLE message DROP COLUMN reaction_kind;
+            PRAGMA user_version = 1;
+            """
+        )
+    with Store(path) as s:
+        assert s.conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert s.people()[0].message_count == 3  # data survives
+        s.set_cursor("fake", "0")
+        FakeConnector().ingest(s)
+        assert s.reactions_to("fake", "3")[0]["reaction_kind"] == "love"
+
+
+def test_newer_schema_rejected(tmp_path):
+    path = tmp_path / "future.db"
+    with Store(path) as s:
+        s.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    with pytest.raises(RuntimeError, match="newer than this code"):
+        Store(path)
