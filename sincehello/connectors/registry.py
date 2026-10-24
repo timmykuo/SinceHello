@@ -10,6 +10,15 @@ from sincehello.connectors.base import Connector
 CONNECTORS: dict[str, Callable[[], Connector]] = {}
 
 
+def _imessage() -> Connector:
+    from sincehello.connectors.imessage import IMessageConnector
+
+    return IMessageConnector()
+
+
+CONNECTORS["imessage"] = _imessage
+
+
 def get(connector_id: str) -> Connector:
     try:
         return CONNECTORS[connector_id]()

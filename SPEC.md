@@ -129,8 +129,12 @@ knows which app a message came from except through the `source` field.
 
 ### 4.2 iMessage connector (v1)
 
-- **Location:** `~/Library/Messages/chat.db`. Copy it (along with its `-wal` and `-shm`
-  files) to a temp directory before reading. Never open the live database.
+- **Location:** `~/Library/Messages/chat.db` (override with `SINCEHELLO_IMESSAGE_DB`, e.g. a
+  `chat.db` from an old Mac or `sms.db` from an iPhone backup). Snapshot it into a temp
+  directory with SQLite's backup API (`sqlite3.Connection.backup`) and read only the
+  snapshot. Messages writes heavily during an iCloud sync, so a plain copy of the db/`-wal`/
+  `-shm` files can catch it mid-write. The live file is opened only read-only
+  (`mode=ro`) as the backup source.
 - **Permission:** the terminal or app needs Full Disk Access. `check()` detects the
   permission error and explains the fix.
 - **Tables used:** `message`, `handle`, `chat`, `chat_message_join`, `chat_handle_join`.
@@ -155,7 +159,11 @@ knows which app a message came from except through the `source` field.
 - **Contact names:** optionally read the macOS AddressBook database
   (`~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`) to map
   handles to names for the person picker. If that's unavailable, fall back to the raw handle.
+- **Ids:** `source_msg_id` is `message.guid` and `source_conv_id` is `chat.guid`, never
+  `ROWID`. iCloud sync can re-insert or merge rows under new ROWIDs, and dedupe has to
+  survive that.
 - **Incremental sync:** remember the max `ROWID` ingested and only pull newer rows next time.
+  The ROWID is only a cursor; dedupe relies on the guid.
 
 ### 4.3 Guided connectors (later phases, designed now)
 
