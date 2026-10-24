@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import tempfile
 from collections.abc import Iterator
@@ -18,6 +19,7 @@ from sincehello.connectors.base import (
     HandleRecord,
     IngestReport,
     MessageRecord,
+    ReactionKind,
     write_batch,
 )
 from sincehello.connectors.imessage_text import try_decode
@@ -34,6 +36,27 @@ ATTACHMENT_CHAR = "\ufffc"
 # chat.style values; anything else falls back to the member count.
 STYLE_GROUP = 43
 STYLE_DIRECT = 45
+
+
+# associated_message_type % 1000 -> kind. 2xxx adds a tapback, 3xxx removes the same kind.
+TAPBACK_KINDS: dict[int, ReactionKind] = {
+    0: "love",
+    1: "like",
+    2: "dislike",
+    3: "laugh",
+    4: "emphasize",
+    5: "question",
+    6: "emoji",
+    7: "other",  # sticker
+}
+# associated_message_guid looks like "p:0/<guid>" (part 0 of the message) or "bp:<guid>".
+_TARGET_PREFIX = re.compile(r"^(?:p:\d+/|bp:)")
+
+
+def tapback_target(associated_message_guid: str | None) -> str | None:
+    if not associated_message_guid:
+        return None
+    return _TARGET_PREFIX.sub("", associated_message_guid) or None
 
 
 def is_tapback(associated_message_type: int | None) -> bool:
@@ -136,6 +159,8 @@ class IMessageConnector:
                 conversations=reader.conversations(),
                 messages=reader.messages(after_rowid=cursor),
             )
+            for target, kind, from_me, sender, sent_at in reader.removals:
+                store.remove_reaction(self.id, target, kind, from_me, sender, sent_at)
             report.warnings.extend(reader.warnings())
             if reader.max_rowid > cursor:
                 cursors[key] = reader.max_rowid
@@ -180,6 +205,12 @@ class _Reader:
             or "0"
         )
         self._body_expr = "m.attributedBody" if "attributedBody" in columns else "NULL"
+        self._target_expr = (
+            "m.associated_message_guid" if "associated_message_guid" in columns else "NULL"
+        )
+        # Undone tapbacks (3xxx), applied after the batch is written: (target, kind, from_me,
+        # sender, sent_at).
+        self.removals: list[tuple[str, ReactionKind, bool, str | None, datetime]] = []
 
     def handles(self) -> Iterator[HandleRecord]:
         for raw in dict.fromkeys(self.handle_by_rowid.values()):
@@ -197,6 +228,7 @@ class _Reader:
             f"""
             SELECT m.ROWID, m.guid, m.text, {self._body_expr} AS body, m.date, m.is_from_me,
                    m.handle_id, m.item_type, m.associated_message_type,
+                   {self._target_expr} AS target_guid,
                    m.cache_has_attachments, ({self._edited_expr}) AS edited,
                    (SELECT min(chat_id) FROM chat_message_join WHERE message_id = m.ROWID)
                        AS chat_id
@@ -224,6 +256,15 @@ class _Reader:
                 if sender is None:
                     self.skipped_no_sender += 1
                     continue
+            assoc = r["associated_message_type"] or 0
+            reaction = is_tapback(assoc)
+            target = tapback_target(r["target_guid"]) if reaction else None
+            kind = TAPBACK_KINDS.get(assoc % 1000, "other") if reaction else None
+            sent_at = apple_time(r["date"] or 0)
+            if reaction and assoc >= 3000:
+                if target and kind:
+                    self.removals.append((target, kind, bool(r["is_from_me"]), sender, sent_at))
+                continue
             raw_text = r["text"] if r["text"] is not None else try_decode(r["body"])
             text, placeholder = clean_text(raw_text)
             yield MessageRecord(
@@ -231,12 +272,14 @@ class _Reader:
                 source_msg_id=r["guid"],
                 source_conv_id=self.chat_guid[chat_id],
                 is_from_me=bool(r["is_from_me"]),
-                sent_at_utc=apple_time(r["date"] or 0),
+                sent_at_utc=sent_at,
                 text=text,
                 sender=sender,
-                is_reaction=is_tapback(r["associated_message_type"]),
+                is_reaction=reaction,
                 has_attachment=bool(r["cache_has_attachments"]) or placeholder,
                 edited=bool(r["edited"]),
+                reacts_to=target,
+                reaction_kind=kind,
             )
 
     def warnings(self) -> list[str]:

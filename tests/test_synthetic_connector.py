@@ -122,3 +122,46 @@ def test_cli_unknown_scenario():
 def test_cli_list():
     result = runner.invoke(app, ["synth", "list"])
     assert "bean-goose" in result.output and "noodle-summit" in result.output
+
+
+def test_reactions_link_to_targets_with_kind(tmp_path):
+    from sincehello.connectors.synthetic import SyntheticConnector
+    from sincehello.store import Store
+
+    with Store(tmp_path / "s.db") as store:
+        SyntheticConnector().ingest(store)
+        linked = store.conn.execute(
+            "SELECT count(*), count(reacts_to_source_msg_id), count(reaction_kind)"
+            " FROM message WHERE is_reaction = 1"
+        ).fetchone()
+        assert linked[0] > 0 and linked[0] == linked[1] == linked[2]
+        kinds = {r[0] for r in store.conn.execute("SELECT DISTINCT reaction_kind FROM message")}
+        assert "other" not in kinds and "love" in kinds
+        orphans = store.conn.execute(
+            "SELECT count(*) FROM message r WHERE r.is_reaction = 1 AND NOT EXISTS"
+            " (SELECT 1 FROM message t WHERE t.source = r.source"
+            "  AND t.source_msg_id = r.reacts_to_source_msg_id)"
+        ).fetchone()[0]
+        assert orphans == 0
+
+
+def test_timezones_loaded_once(tmp_path):
+    from sincehello.connectors.synthetic import SyntheticConnector
+    from sincehello.store import Store
+
+    with Store(tmp_path / "s.db") as store:
+        SyntheticConnector().ingest(store)
+        SyntheticConnector().ingest(store)
+        alex = store.person_for_handle("synthetic", "+12125550142")
+        tzs = [p["iana_tz"] for p in store.tz_periods(alex)]
+        assert tzs == ["America/New_York", "Asia/Tokyo", "America/New_York"]
+        assert [p["iana_tz"] for p in store.tz_periods(1)] == ["America/New_York"]
+
+
+def test_timezones_can_be_withheld(tmp_path):
+    from sincehello.connectors.synthetic import SyntheticConnector
+    from sincehello.store import Store
+
+    with Store(tmp_path / "s.db") as store:
+        SyntheticConnector(load_timezones=False).ingest(store)
+        assert store.conn.execute("SELECT count(*) FROM tz_period").fetchone()[0] == 0

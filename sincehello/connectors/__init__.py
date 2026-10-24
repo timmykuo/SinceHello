@@ -5,6 +5,7 @@ from sincehello.connectors.base import (
     HandleRecord,
     IngestReport,
     MessageRecord,
+    ReactionKind,
     write_batch,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "HandleRecord",
     "IngestReport",
     "MessageRecord",
+    "ReactionKind",
     "write_batch",
 ]

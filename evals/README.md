@@ -75,6 +75,12 @@ One JSON object per line, sorted by time, timestamps strictly increasing.
 `fact` and `role` are for eval scoring and debugging only. The `synthetic` connector never
 writes them to the store, so the pipeline can't see them.
 
+The connector does load each reaction's `reacts_to` link, with a `reaction_kind` taken from the
+verb (`Loved` → love, `Laughed at` → laugh, ...). By default it also loads the manifest's true
+`timezones` into the store's `tz_period` table, so stats use each sender's local time. Pass
+`SyntheticConnector(load_timezones=False)` to withhold them when evaluating timezone
+inference (M7).
+
 ## `manifest.json`
 
 | field | meaning |

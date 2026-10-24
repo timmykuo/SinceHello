@@ -15,6 +15,7 @@ from sincehello.connectors.imessage import (
     apple_time,
     is_tapback,
     load_cursors,
+    tapback_target,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "imessage"
@@ -227,3 +228,60 @@ def test_second_database_has_its_own_cursor(store, chat_db, tmp_path):
 def test_legacy_integer_cursor_maps_to_default_db():
     assert load_cursors("291512") == {str(DEFAULT_DB.resolve()): 291512}
     assert load_cursors(None) == {}
+
+
+def test_tapback_target_strips_prefixes():
+    assert tapback_target("p:0/ABC-123") == "ABC-123"
+    assert tapback_target("p:12/ABC-123") == "ABC-123"
+    assert tapback_target("bp:ABC-123") == "ABC-123"
+    assert tapback_target("ABC-123") == "ABC-123"
+    assert tapback_target(None) is None
+
+
+def _with_tapbacks(chat_db, *rows):
+    db = sqlite3.connect(chat_db)
+    db.execute("ALTER TABLE message ADD COLUMN associated_message_guid TEXT")
+    db.execute("UPDATE message SET associated_message_guid = 'p:0/msg-1' WHERE ROWID = 4")
+    for rowid, kwargs in rows:
+        add_message(db, rowid, 1, **kwargs)
+    db.commit()
+    db.close()
+
+
+def test_tapbacks_link_to_target_with_kind(store, chat_db):
+    _with_tapbacks(
+        chat_db,
+        (20, dict(text='Laughed at "hi"', associated_message_type=2003,
+                  associated_message_guid="bp:msg-3")),
+    )  # fmt: skip
+    ingest(store, chat_db)
+    [mine] = store.reactions_to("imessage", "msg-1")
+    assert (mine["reaction_kind"], mine["is_from_me"]) == ("love", 1)
+    [theirs] = store.reactions_to("imessage", "msg-3")
+    assert (theirs["reaction_kind"], theirs["is_from_me"]) == ("laugh", 0)
+
+
+def test_removed_tapback_is_dropped(store, chat_db):
+    # Same batch: the love on msg-1 (ROWID 4) is undone by ROWID 21.
+    _with_tapbacks(
+        chat_db,
+        (21, dict(is_from_me=1, handle_id=0, text='Removed a heart from "hi"',
+                  associated_message_type=3000, associated_message_guid="p:0/msg-1",
+                  date=700_000_100 * NS)),
+    )  # fmt: skip
+    ingest(store, chat_db)
+    assert store.reactions_to("imessage", "msg-1") == []
+    assert "msg-21" not in rows(store)
+
+
+def test_removed_tapback_in_later_ingest(store, chat_db):
+    _with_tapbacks(chat_db)
+    ingest(store, chat_db)
+    assert len(store.reactions_to("imessage", "msg-1")) == 1
+    db = sqlite3.connect(chat_db)
+    add_message(db, 22, 1, is_from_me=1, handle_id=0, associated_message_type=3000,
+                associated_message_guid="p:0/msg-1", date=700_000_100 * NS)  # fmt: skip
+    db.commit()
+    db.close()
+    ingest(store, chat_db)
+    assert store.reactions_to("imessage", "msg-1") == []

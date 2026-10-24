@@ -24,8 +24,10 @@ from sincehello.connectors.base import (
     HandleRecord,
     IngestReport,
     MessageRecord,
+    ReactionKind,
     write_batch,
 )
+from sincehello.store.store import ME_PERSON_ID, to_utc_ms
 
 if TYPE_CHECKING:
     from sincehello.store import Store
@@ -40,8 +42,11 @@ class SyntheticConnector:
     id = SOURCE
     kind = "guided"
 
-    def __init__(self, path: Path | str | None = None) -> None:
+    def __init__(self, path: Path | str | None = None, *, load_timezones: bool = True) -> None:
         self.path = Path(path or os.environ.get(ENV_DIR) or SAMPLE_DIR)
+        # The manifest's true timezone periods. Turn off to test timezone inference (M7)
+        # against them instead of handing them to the store.
+        self.load_timezones = load_timezones
 
     def check(self) -> ConnectorStatus:
         for name in ("messages.jsonl", "manifest.json"):
@@ -84,10 +89,30 @@ class SyntheticConnector:
             convs.values(),
             self._messages(people, convs),
         )
+        if self.load_timezones:
+            self._load_timezones(store, manifest)
         # Re-ingest is idempotent via UNIQUE(source, source_msg_id); the cursor only
         # records which history was loaded last.
         store.set_cursor(SOURCE, manifest["history_id"])
         return report
+
+    def _load_timezones(self, store: Store, manifest: dict[str, Any]) -> None:
+        for key, periods in manifest.get("timezones", {}).items():
+            if key == "me":
+                person_id = ME_PERSON_ID
+            else:
+                handle = manifest["participants"][key]["handle"]
+                person_id = store.person_for_handle(SOURCE, handle)
+            if person_id is None:
+                continue
+            existing = {
+                (p["start_utc"], p["end_utc"], p["iana_tz"]) for p in store.tz_periods(person_id)
+            }
+            for p in periods:
+                start, end = _utc(p["start_utc"]), _utc(p["end_utc"]) if p["end_utc"] else None
+                key_ = (to_utc_ms(start), to_utc_ms(end) if end else None, p["tz"])
+                if key_ not in existing:
+                    store.add_tz_period(person_id, start, end, p["tz"], source="user")
 
     def _manifest(self) -> dict[str, Any]:
         return json.loads((self.path / "manifest.json").read_text(encoding="utf-8"))
@@ -106,10 +131,32 @@ class SyntheticConnector:
                     source_msg_id=r["id"],
                     source_conv_id=convs[r["conv"]].source_conv_id,
                     is_from_me=from_me,
-                    sent_at_utc=datetime.fromisoformat(r["ts"].replace("Z", "+00:00")),
+                    sent_at_utc=_utc(r["ts"]),
                     text=r["text"],
                     sender=None if from_me else people[r["sender"]]["handle"],
                     is_reaction=r["is_reaction"],
                     has_attachment=r["has_attachment"],
                     edited=r["edited"],
+                    reacts_to=r.get("reacts_to") if r["is_reaction"] else None,
+                    reaction_kind=_reaction_kind(r["text"]) if r["is_reaction"] else None,
                 )
+
+
+# The generator writes reactions the way iMessage does: 'Loved “…”'.
+_REACTION_VERBS: dict[str, ReactionKind] = {
+    "Loved": "love",
+    "Liked": "like",
+    "Laughed at": "laugh",
+    "Emphasized": "emphasize",
+}
+
+
+def _reaction_kind(text: str | None) -> ReactionKind:
+    for verb, kind in _REACTION_VERBS.items():
+        if text and text.startswith(verb + " "):
+            return kind
+    return "other"
+
+
+def _utc(ts: str) -> datetime:
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))

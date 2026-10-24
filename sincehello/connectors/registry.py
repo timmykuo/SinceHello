@@ -7,6 +7,12 @@ from collections.abc import Callable
 from sincehello.connectors.base import Connector
 
 
+def _imessage() -> Connector:
+    from sincehello.connectors.imessage import IMessageConnector
+
+    return IMessageConnector()
+
+
 def _synthetic() -> Connector:
     from sincehello.connectors.synthetic import SyntheticConnector
 
@@ -15,17 +21,9 @@ def _synthetic() -> Connector:
 
 # id -> zero-arg factory. Factories keep imports and setup lazy.
 CONNECTORS: dict[str, Callable[[], Connector]] = {
+    "imessage": _imessage,
     "synthetic": _synthetic,
 }
-
-
-def _imessage() -> Connector:
-    from sincehello.connectors.imessage import IMessageConnector
-
-    return IMessageConnector()
-
-
-CONNECTORS["imessage"] = _imessage
 
 
 def get(connector_id: str) -> Connector:

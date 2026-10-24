@@ -170,6 +170,32 @@ class Store:
                 added += cur.rowcount
         return seen, added
 
+    def remove_reaction(
+        self,
+        source: str,
+        reacts_to: str,
+        reaction_kind: str,
+        is_from_me: bool,
+        sender: str | None,
+        before: datetime,
+    ) -> bool:
+        """Delete the latest matching reaction sent before `before` (the reaction was undone).
+
+        Returns False when there's nothing to remove, e.g. the reaction was never ingested.
+        """
+        sender_id = None if is_from_me else self._handle_id(source, sender or "")
+        if not is_from_me and sender_id is None:
+            return False
+        with self.conn:
+            cur = self.conn.execute(
+                "DELETE FROM message WHERE id = (SELECT id FROM message"
+                " WHERE source = ? AND is_reaction = 1 AND reacts_to_source_msg_id = ?"
+                " AND reaction_kind = ? AND is_from_me = ? AND sender_handle_id IS ?"
+                " AND sent_at_utc <= ? ORDER BY sent_at_utc DESC LIMIT 1)",
+                (source, reacts_to, reaction_kind, int(is_from_me), sender_id, to_utc_ms(before)),
+            )
+        return cur.rowcount > 0
+
     def get_cursor(self, source: str) -> str | None:
         row = self.conn.execute("SELECT cursor FROM sync_state WHERE source = ?", (source,))
         found = row.fetchone()
@@ -207,6 +233,12 @@ class Store:
             ).lastrowid
 
     # --- reads --------------------------------------------------------------
+
+    def person_for_handle(self, source: str, raw_value: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT person_id FROM handle WHERE source = ? AND raw_value = ?", (source, raw_value)
+        ).fetchone()
+        return row["person_id"] if row else None
 
     def tz_periods(self, person_id: int) -> list[sqlite3.Row]:
         return self.conn.execute(
