@@ -22,6 +22,8 @@ a module, and update the spec when a decision changes.
 - `sincehello/analysis/`: the deterministic stats engine (SPEC §7.1). Register stats with
   `@stat(...)` in `stats.py`; keyword-only arguments are the stat's parameters and feed
   its `query_id`. Results must be JSON-serializable and must not depend on the wall clock.
+  `eras.py` (SPEC §7.2) and `miners.py` (§7.3) are the interface the agent tools call;
+  keep their signatures stable. Lexicons live in `analysis/lexicon/`.
 - `tests/`: `conftest.py` has `FakeConnector`, an example connector, `ScriptedConnector`
   for custom fixtures, and fixtures.
 - `evals/`: synthetic histories with planted facts (SPEC §10.1). Format and commands in

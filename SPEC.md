@@ -339,6 +339,44 @@ This splits the relationship into chapters without sending everything to Claude.
 - Output: `era(id, start, end, signal_summary)`. Naming and summarizing the eras is
   the agent's job: it calls `sample_era` and reads a sampled window from each.
 
+Implementation notes (`sincehello/analysis/eras.py`, M2):
+
+- `detect_eras(store, person_id, *, min_weeks=6, max_eras=8, default_tz=None)` returns
+  `Era(id, start_utc, end_utc, message_count, signals)`; `sincehello eras <person> [--json]`
+  prints them. Weeks run Monday 00:00 UTC to Monday; middle boundaries fall on week starts,
+  the first era starts at the first message, and the last ends just after the last one.
+- Weekly signals: log messages/week (partial first and last weeks scaled up), log reply-time
+  median (same reply definition as §7.1), late-night share (00:00–03:59 sender-local),
+  vocabulary drift (cosine distance between the week's content words and the previous four
+  weeks'), affection share (messages with a term from the bundled `lexicon/affection.txt` or
+  a heart emoji), the timezone gap between the two people (hours, from `tz_period`), and
+  the weekly share of each of the 30 most frequent content words. The per-word shares
+  matter: on synthetic histories topic shifts are what separate most eras, and adding them
+  raised boundary recall from ~0.75 to ~0.9 at the same precision.
+- Each signal is scaled by its week-to-week noise (mean absolute difference between
+  consecutive weeks, floored at 10% of its spread), so clean steps like a timezone move
+  stand out and noisy signals don't invent eras.
+- Segmentation: the exact least-squares segmentation (the objective PELT optimizes) by
+  dynamic programming, with every era ≥ `min_weeks` and at most `max_eras`; the era count
+  minimizes cost + 0.7 · log(weeks) · (live signal dimensions) per extra era. We don't use
+  `ruptures`: weekly data is small (ten years ≈ 520 weeks, ~1 s in pure Python), the exact
+  DP enforces both limits directly, and it avoids a numpy/scipy dependency.
+- Histories shorter than two minimum-length eras are one era.
+- `signals` per era: `weeks`, `messages_per_week`, `volume_vs_overall`, `share_me`,
+  `late_night_share`, `affection_share`, `tz_gap_hours` (median daily gap), plus
+  `reply_median_s` when there are replies and `vocab_shift` (cosine distance from the
+  previous era's words) from the second era on. All floats; naming is the agent's job.
+- `sample_era(store, person_id, era, *, n=40, strategy, seed=0, default_tz=None)` returns
+  message rows (plus a `sender` column) in time order: `random` (seeded uniform),
+  `spike_days` (busiest sender-local days first, the densest run of up to n // 3 messages
+  from each), `longest_threads` (threads split at 1h gaps, longest first, the opening
+  n // 3 messages of each).
+- Accuracy on synthetic histories (boundary within 14 days of a planted one): the committed
+  bean-goose sample finds all 5 boundaries with no spurious ones, including the Tokyo
+  stretch (start off by 1 day; the end is 6 days early because the last era is shorter
+  than `min_weeks`). On 6 held-out histories (bean-goose and noodle-summit, other seeds,
+  3k–10k messages): recall 0.90, precision 0.90.
+
 ### 7.3 Candidate miners (local, cheap)
 
 These give the agent leads to check. They don't decide anything.
@@ -350,6 +388,42 @@ These give the agent leads to check. They don't decide anything.
 - Spikes: days with volume > 3σ above the mean (often big moments).
 - Conflicts and makeups: long gaps or sharp drops in tone, followed by apology terms.
   These are included as insights (see §12).
+
+Implementation notes (`sincehello/analysis/miners.py`, M2):
+
+- `mine(store, person_id, kind=None, *, limit=20, default_tz=None)` returns
+  `Candidate(kind, label, message_ids, score, details)` best first; `sincehello candidates
+  <person> [--kind K] [--json]` prints them. `message_ids` are store `message.id` values.
+  Scores share a rough 0–1 scale so a mixed list ranks sensibly.
+- Firsts: one candidate per family with any match, `message_ids[0]` is the earliest
+  match, followed by the other person's reply (if within 6h) and the other person's own
+  first match. Families and patterns (case-insensitive `re.search`, curly apostrophes
+  straightened): i love you `\b(i love you|love you|ily|ilysm|love u|luv you|luv u|love ya)\b`
+  (score 1.0), miss you (0.85), babe/baby/bae/honey/sweetheart/sweetie/darling (0.8),
+  goodnight/gn/nighty night (0.7), happy birthday/bday/hbd (0.7). Details carry the
+  sender's local time, reply delay, and counts per sender.
+- Pet names: tokens used in ≥ 5 messages, alphabetic, 2–12 letters, ≥ 50% of uses as a
+  message's first or last word, a per-message rate ≥ 2x higher for one person, not a
+  name of anyone in the store, not in `common_english.txt` or the chat-slang list
+  (`lexicon/chat_slang.txt`, matched after squeezing repeated letters), and ≥ 3x more
+  frequent here than in my other 1:1 chats. Known terms of endearment
+  (`lexicon/pet_names.txt`) skip the dictionary checks and get a boost. Score grows with
+  asymmetry, edge share, how many different messages and neighboring words it appears
+  with (templates like "have you eaten" repeat), and use count; candidates below 0.25 are
+  dropped.
+- Spikes: sender-local days with ≥ 10 messages and z > 3 against the days within ±28 days
+  (σ floored at 1). A local baseline keeps busy eras from flagging every day.
+- Conflicts: a gap ≥ max(12h, 1.5 × p95 gap) followed within 6 messages / 6h by an
+  apology, or (tone drop) a real apology preceded within 6h by ≥ 2 tense messages ("you
+  said", "whatever", "i need space", "i'm so upset", "?!", ...). Apologies are tiered
+  (heavy "i was wrong / i'm sorry about"; "i'm sorry / my bad"; bare "sorry"), and
+  logistics ("sorry running late") don't count. The fight's start is the first tense
+  message in the exchange before the silence. Overlapping candidates collapse to the
+  best-scoring one, so a sarcastic "i said i'm sorry" mid-fight isn't its own conflict.
+- On the bean-goose sample every targeted planted fact (first "i love you" with its
+  traps, pet name "bean", moving day, the fight and makeup) is its kind's top candidate;
+  same on 13 other generated histories. Precision: pet names and conflicts 1/1, spikes
+  1/5 (ordinary busy days at z 3–5 alongside the planted z ≈ 18).
 
 ### 7.4 Agent tools (the only window Claude has into the messages)
 
@@ -604,7 +678,8 @@ tests/
 web/               (later) TypeScript UI
 ```
 
-Key libraries: `anthropic`, `pydantic`, `typer`, `ruptures`, `sqlite3`/FTS5, `pytest`.
+Key libraries: `anthropic`, `pydantic`, `typer`, `sqlite3`/FTS5, `pytest` (era detection
+is pure Python; see §7.2 for why not `ruptures`).
 
 ---
 

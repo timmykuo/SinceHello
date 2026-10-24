@@ -1,0 +1,4 @@
+# Common English terms of endearment, hand-written. The pet-name miner lets these through
+# its dictionary filter (they are dictionary words but often used as names).
+babe baby bae bb boo bub bubs bubba honey hun hon sweetie sweetheart darling dear love
+lovey cutie angel sunshine pumpkin sugar doll muffin bear teddy bunny peanut kitten

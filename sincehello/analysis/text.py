@@ -73,3 +73,23 @@ def emoji(text: str) -> Iterator[str]:
         e = match.group().replace("\ufe0f", "")
         # Count text-style and emoji-style hearts as one: single BMP symbols get U+FE0F.
         yield e + "\ufe0f" if len(e) == 1 and ord(e) < 0x10000 else e
+
+
+def affection_terms() -> frozenset[str]:
+    return _lexicon("affection.txt")
+
+
+def pet_name_terms() -> frozenset[str]:
+    return _lexicon("pet_names.txt")
+
+
+def chat_slang() -> frozenset[str]:
+    return _lexicon("chat_slang.txt")
+
+
+_REPEATS = re.compile(r"(.)\1{2,}")
+
+
+def squeeze(token: str) -> str:
+    """Collapse runs of 3+ repeated characters to 2 ("yesss" -> "yess")."""
+    return _REPEATS.sub(r"\1\1", token)

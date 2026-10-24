@@ -29,6 +29,7 @@ class Msg:
     sender: str  # ME or THEM
     sent_at_utc: int  # ms
     text: str
+    row_id: int  # message.id in the store
 
 
 class Dataset:
@@ -54,7 +55,7 @@ class Dataset:
         self.tz = TzResolver(store, default_tz)
 
         sql = f"""
-            SELECT m.source, m.source_msg_id, m.is_from_me, m.sent_at_utc, m.text,
+            SELECT m.id, m.source, m.source_msg_id, m.is_from_me, m.sent_at_utc, m.text,
                    h.person_id AS sender_person_id
               FROM message m
               LEFT JOIN handle h ON h.id = m.sender_handle_id
@@ -80,7 +81,11 @@ class Dataset:
                 continue  # a stray third party in a 1:1 thread; not part of this pair
             self.messages.append(
                 Msg(
-                    f"{r['source']}:{r['source_msg_id']}", sender, r["sent_at_utc"], r["text"] or ""
+                    f"{r['source']}:{r['source_msg_id']}",
+                    sender,
+                    r["sent_at_utc"],
+                    r["text"] or "",
+                    r["id"],
                 )
             )
         self.local: list[datetime] = [

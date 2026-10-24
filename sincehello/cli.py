@@ -10,6 +10,8 @@ import typer
 
 from sincehello import config
 from sincehello.analysis import compute_all
+from sincehello.analysis.eras import detect_eras
+from sincehello.analysis.miners import KINDS, mine
 from sincehello.analysis.render import render
 from sincehello.connectors import registry
 from sincehello.store import Store
@@ -96,6 +98,66 @@ def stats(
         return
     for line in render(results, name):
         typer.echo(line)
+
+
+@app.command()
+def eras(
+    person_id: Annotated[int, typer.Argument(help="Person id, from `sincehello people`.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+    min_weeks: Annotated[int, typer.Option(help="Shortest era, in weeks.")] = 6,
+    max_eras: Annotated[int, typer.Option(help="Most eras to return.")] = 8,
+    tz: Annotated[str | None, typer.Option(help="Timezone for people with no tz periods.")] = None,
+) -> None:
+    """Chapters of your history with one person, from weekly signals (no LLM)."""
+    with Store(config.store_path()) as store:
+        try:
+            found = detect_eras(
+                store, person_id, min_weeks=min_weeks, max_eras=max_eras, default_tz=tz
+            )
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+    if as_json:
+        out = {"person_id": person_id, "eras": [e.to_dict() for e in found]}
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    if not found:
+        typer.echo("No messages with this person.")
+    for e in found:
+        s = e.signals
+        reply = f"{s['reply_median_s']:.0f}s" if "reply_median_s" in s else "-"
+        typer.echo(
+            f"{e.id:<7} {e.start_utc:%Y-%m-%d} -> {e.end_utc:%Y-%m-%d}"
+            f"  {e.message_count:>6} msgs  {s['messages_per_week']:>6.1f}/wk"
+            f"  reply {reply:>6}  late {s['late_night_share']:.0%}"
+            f"  affection {s['affection_share']:.0%}  tz gap {s['tz_gap_hours']:g}h"
+        )
+
+
+@app.command()
+def candidates(
+    person_id: Annotated[int, typer.Argument(help="Person id, from `sincehello people`.")],
+    kind: Annotated[str | None, typer.Option(help=f"Only this kind: {', '.join(KINDS)}.")] = None,
+    limit: Annotated[int, typer.Option(help="Max candidates.")] = 20,
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+    tz: Annotated[str | None, typer.Option(help="Timezone for people with no tz periods.")] = None,
+) -> None:
+    """Leads for the agent: firsts, pet names, spikes, conflicts (no LLM)."""
+    with Store(config.store_path()) as store:
+        try:
+            found = mine(store, person_id, kind, limit=limit, default_tz=tz)
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+    if as_json:
+        out = {"person_id": person_id, "candidates": [c.to_dict() for c in found]}
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    if not found:
+        typer.echo("No candidates.")
+    for c in found:
+        ids = ", ".join(map(str, c.message_ids[:5])) + (" ..." if len(c.message_ids) > 5 else "")
+        typer.echo(f"{c.score:.2f}  {c.kind:<9} {c.label}  [messages {ids}]")
 
 
 synth = typer.Typer(help="Synthetic histories with planted facts for evals (SPEC.md §10.1).")

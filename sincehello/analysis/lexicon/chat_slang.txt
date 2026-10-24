@@ -1,0 +1,9 @@
+# Chat abbreviations, interjections, and spellings that are not in common_english.txt but
+# are never pet names. Hand-written. Tokens are matched after squeezing repeated letters
+# (so "yesss" and "hiii" match "yes" and "hi").
+lol lmao lmfao rofl haha hahaha hahahaha hehe heh omg omfg wtf idk idc tbh ngl imo imho
+rn tn tmrw tmr tmw tho thx ty tysm np pls plz ok okay okk kk k ya yah yea yeah yep yup
+nah nope brb ttyl gtg gn gm hbu wbu wyd hmu irl fr bc cuz ur u r y ppl msg txt bday yay
+yes yess no nooo ugh ew eww hm hmm hmmm wow oof bruh dude bro lowkey highkey hi hii hey
+heyy hiya sup yo aw aww awww oh ohh ooh omw ikr smh jk asap fyi lmk wanna gonna gotta
+kinda sorta dunno lemme gimme ya'll y'all im ive id dont cant wont didnt isnt

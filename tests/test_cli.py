@@ -52,3 +52,35 @@ def test_stats_text_and_json():
 def test_stats_unknown_person():
     result = runner.invoke(app, ["stats", "99"])
     assert result.exit_code == 1
+
+
+def test_eras_and_candidates_on_the_sample(monkeypatch):
+    monkeypatch.delenv("SINCEHELLO_SYNTHETIC_DIR", raising=False)
+    result = runner.invoke(app, ["connect", "synthetic"])
+    assert result.exit_code == 0, result.output
+    alex = "2"
+    result = runner.invoke(app, ["eras", alex])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("era_1 ") and "tz gap 14h" in result.output
+    result = runner.invoke(app, ["eras", alex, "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["eras"][0]["id"] == "era_1" and "signals" in data["eras"][0]
+
+    result = runner.invoke(app, ["candidates", alex])
+    assert result.exit_code == 0, result.output
+    assert 'first "i love you"' in result.output and 'pet name "bean"' in result.output
+    result = runner.invoke(app, ["candidates", alex, "--kind", "pet_name", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert [c["kind"] for c in data["candidates"]] == ["pet_name"]
+    assert data["candidates"][0]["details"]["term"] == "bean"
+
+
+def test_eras_and_candidates_errors():
+    runner.invoke(app, ["connect", "fake"])
+    assert runner.invoke(app, ["eras", "99"]).exit_code == 1
+    assert runner.invoke(app, ["candidates", "99"]).exit_code == 1
+    assert runner.invoke(app, ["candidates", "2", "--kind", "nope"]).exit_code == 1
+    result = runner.invoke(app, ["eras", "2", "--tz", "UTC"])
+    assert result.exit_code == 0 and result.output.startswith("era_1 ")
