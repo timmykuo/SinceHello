@@ -53,6 +53,23 @@ class FakeConnector:
         return report
 
 
+class ScriptedConnector(FakeConnector):
+    """FakeConnector with caller-chosen handles and conversations, for stats fixtures."""
+
+    def __init__(
+        self,
+        messages: list[MessageRecord],
+        handles: list[HandleRecord],
+        conversations: list[ConversationRecord],
+    ) -> None:
+        super().__init__(messages)
+        self.handles = handles
+        self.conversations = conversations
+
+    def ingest(self, store: Store) -> IngestReport:
+        return write_batch(store, self.id, self.handles, self.conversations, self.messages)
+
+
 def msg(
     i: int, conv: str, from_me: bool, text: str, sender: str | None = None, **kw
 ) -> MessageRecord:

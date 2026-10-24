@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from conftest import FakeConnector
 from typer.testing import CliRunner
@@ -32,4 +34,21 @@ def test_connect_then_people():
 
 def test_unknown_connector():
     result = runner.invoke(app, ["connect", "nope"])
+    assert result.exit_code == 1
+
+
+def test_stats_text_and_json():
+    runner.invoke(app, ["connect", "fake"])
+    result = runner.invoke(app, ["stats", "2", "--tz", "UTC"])
+    assert result.exit_code == 0, result.output
+    assert "Stats for Alex" in result.output and "q_totals_" in result.output
+    result = runner.invoke(app, ["stats", "2", "--json", "--tz", "UTC"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["stats"]["totals"]["value"]["total"] == 3
+    assert data["stats"]["who_texts_first"]["params"]["gap_hours"] == 6.0
+
+
+def test_stats_unknown_person():
+    result = runner.invoke(app, ["stats", "99"])
     assert result.exit_code == 1
