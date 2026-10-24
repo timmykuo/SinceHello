@@ -129,8 +129,12 @@ knows which app a message came from except through the `source` field.
 
 ### 4.2 iMessage connector (v1)
 
-- **Location:** `~/Library/Messages/chat.db`. Copy it (along with its `-wal` and `-shm`
-  files) to a temp directory before reading. Never open the live database.
+- **Location:** `~/Library/Messages/chat.db` (override with `SINCEHELLO_IMESSAGE_DB`, e.g. a
+  `chat.db` from an old Mac or `sms.db` from an iPhone backup). Snapshot it into a temp
+  directory with SQLite's backup API (`sqlite3.Connection.backup`) and read only the
+  snapshot. Messages writes heavily during an iCloud sync, so a plain copy of the db/`-wal`/
+  `-shm` files can catch it mid-write. The live file is opened only read-only
+  (`mode=ro`) as the backup source.
 - **Permission:** the terminal or app needs Full Disk Access. `check()` detects the
   permission error and explains the fix.
 - **Tables used:** `message`, `handle`, `chat`, `chat_message_join`, `chat_handle_join`.
@@ -141,21 +145,35 @@ knows which app a message came from except through the `source` field.
   - On newer macOS, `message.text` is often NULL and the text lives in the
     `attributedBody` blob (an NSAttributedString typedstream), so we need a decoder.
     This is the riskiest part of the connector and needs tests against real samples.
-  - **Tapbacks** (`associated_message_type` 2000–2006 and 3000–3006) are stored as
+  - **Tapbacks** (`associated_message_type` 2000–2007 and 3000–3007; 2006 is an emoji
+    reaction and 2007 a sticker tapback on newer OSes) are stored as
     messages like `Loved "…"`. Since v1 is text-only, store them flagged
     `is_reaction=1` and **exclude them from text analysis**, or "Loved" becomes
     the top word.
   - Edited and unsent messages (macOS 13+): keep the final text and set an `edited` flag.
+  - **Group vs. 1:1:** `chat.style` 45 = 1:1 and 43 = group, verified on a real DB (every
+    style-45 chat had exactly one other member; style-43 chats had 1–N, since a group can
+    shrink). Unknown styles fall back to member count > 1.
+  - Rows with `item_type != 0` (renames, member changes) are system events and are skipped.
   - **1:1 only (v1):** ingest every conversation, but analysis uses only conversations
     where `conversation.is_group = 0`. Group chats are stored for later use.
   - `is_from_me` gives the sender direction. In 1:1 chats the other sender comes from `handle_id`.
   - One person often has **several handles** (a phone number plus an Apple ID email).
     These get merged in identity resolution (§6).
   - Attachments-only messages (U+FFFC placeholder) are counted for stats but carry no text.
-- **Contact names:** optionally read the macOS AddressBook database
-  (`~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`) to map
-  handles to names for the person picker. If that's unavailable, fall back to the raw handle.
+- **Contact names (planned, deferred from M1):** read the macOS AddressBook database
+  (`~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`, also
+  behind Full Disk Access; snapshot it like `chat.db`) to map handles to names for the
+  person picker and to feed automatic merges (§6). If that's unavailable, fall back to the
+  raw handle. On the first real ingest, a top contact's phone and iCloud email showed up as
+  two separate people in `sincehello people`; a shared contact card would have merged them.
+- **Ids:** `source_msg_id` is `message.guid` and `source_conv_id` is `chat.guid`, never
+  `ROWID`. iCloud sync can re-insert or merge rows under new ROWIDs, and dedupe has to
+  survive that.
 - **Incremental sync:** remember the max `ROWID` ingested and only pull newer rows next time.
+  The ROWID is only a cursor; dedupe relies on the guid. ROWIDs are only comparable within one
+  database, so the cursor is a JSON map of `{database path: max ROWID}`; ingesting an old
+  backup after this Mac's `chat.db` reads all of it, and guids dedupe the overlap.
 
 ### 4.3 Guided connectors (later phases, designed now)
 
@@ -599,7 +617,8 @@ Key libraries: `anthropic`, `pydantic`, `typer`, `ruptures`, `sqlite3`/FTS5, `py
 7. **M7 — Timezone inference:** sleep-window shift detection, agent naming, confirm
    flow, cross-timezone insights. Synthetic scenarios get a planted long-distance era.
 8. **M8 — Iterate:** tune prompts, effort, and tools against the evals.
-9. **Later:** guided connectors (Instagram, Messenger, WhatsApp), TypeScript story-card UI,
+9. **Later:** AddressBook contacts (names in `sincehello people`, merges for handles on the
+   same contact card; §4.2), guided connectors (Instagram, Messenger, WhatsApp), TypeScript story-card UI,
    image export, bulk "deep mode", reactions and images, year-in-review mode,
    group chats, mixed-language support (stopwords, lexicons, CJK segmentation, trigram FTS).
 
