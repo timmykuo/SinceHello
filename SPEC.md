@@ -266,6 +266,43 @@ come from here, never from the LLM.
   frequency list. Distinctive phrases are prime candidates for inside jokes.
 - Message-length stats and the "double-texter" score
 
+Implementation notes (`sincehello/analysis/`, M2):
+
+- `sincehello stats <person> [--json]` prints every stat. Each result is
+  `{query_id, stat, person_id, params, value, flags}`. `params` holds every parameter
+  with defaults filled in (including `default_tz` for stats that depend on timezones), and
+  `query_id` = `q_<stat>_<hash of stat, person, params, STATS_VERSION>`, so
+  `recompute(store, result)` reproduces it exactly (§7.6). Bump `STATS_VERSION` when a
+  definition changes.
+- Every stat takes optional `start_utc` / `end_utc` (ms) windows, so era-level stats
+  (e.g. reply time by era) reuse the same code once §7.2 exists.
+- Definitions, where the bullets above leave room:
+  - Calendar-day stats (per year/month, busiest day, streak) count each message on its
+    **sender's** local date, like time-of-day stats.
+  - "Since hello" runs to `as_of_utc`, or to the last message when unset, so results never
+    depend on the wall clock.
+  - A conversation start is the first message, or any message ≥ `gap_hours` (default 6)
+    after the previous one. A reply is a sender change < `max_reply_hours` (default 6)
+    after the previous message. p90 uses the nearest-rank method.
+  - Double text: a message sent ≥ 20 minutes after the same sender's previous message with
+    no reply in between. Score = double texts / turns (a turn is a run of one sender's
+    messages).
+  - Words and n-grams use a bundled English stopword list; n-grams never cross sentence
+    punctuation and skip grams made only of stopwords. Emoji are counted with
+    text/emoji presentation (U+FE0F) merged.
+  - Distinctive phrases: 1–3-grams that neither start nor end with a stopword, seen ≥ 3
+    times, with a frequency ratio ≥ 5 versus my 1:1 chats with everyone else. With fewer
+    than 500 baseline tokens, they fall back to a bundled common-English list (a phrase
+    must contain a word outside it) and carry the `baseline_general_english` flag. A
+    phrase is dropped when a longer kept phrase explains ≥ 80% of its uses.
+  - Cross-timezone windows: runs of ≥ 28 days where the two people's UTC offsets (sampled
+    daily at noon UTC) differ by ≥ 3h. Each reports the waking-hours overlap (08–23 local),
+    messages sent during the recipient's night (23–07), and the median wait for a reply to
+    those night messages.
+- Timezones resolve through `tz_period`: when periods overlap, `user` beats
+  `inferred_confirmed` beats `default`, then the later start wins. With no period, the
+  default is `SINCEHELLO_TZ`, else the machine's timezone, else UTC.
+
 ### 7.2 Era detection (local)
 
 This splits the relationship into chapters without sending everything to Claude.
@@ -479,6 +516,7 @@ with human rating → keep or revert. Every run's config and results are version
 sincehello connect                 # list connectors and their status
 sincehello connect imessage        # check access, ingest
 sincehello people                  # list people, by message count
+sincehello stats <person> [--json] # local stats only (§7.1), no LLM
 sincehello merge <person> <handle> # manual identity merge
 sincehello analyze <person> [--max-cost 5] [--deck-size 15]
                                    # the "one click": sync all connected sources → analyze

@@ -161,7 +161,34 @@ class Store:
                 (source, cursor, int(time.time() * 1000)),
             )
 
+    def add_tz_period(
+        self,
+        person_id: int,
+        start_utc: datetime,
+        end_utc: datetime | None,
+        iana_tz: str,
+        source: str = "user",
+    ) -> int:
+        """Record that a person was in iana_tz from start_utc until end_utc (SPEC.md §6.1)."""
+        with self.conn:
+            return self.conn.execute(
+                "INSERT INTO tz_period (person_id, start_utc, end_utc, iana_tz, source)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    person_id,
+                    to_utc_ms(start_utc),
+                    to_utc_ms(end_utc) if end_utc else None,
+                    iana_tz,
+                    source,
+                ),
+            ).lastrowid
+
     # --- reads --------------------------------------------------------------
+
+    def tz_periods(self, person_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM tz_period WHERE person_id = ? ORDER BY start_utc, id", (person_id,)
+        ).fetchall()
 
     def people(self) -> list[PersonSummary]:
         """Everyone except me, by message count in 1:1 conversations (SPEC.md §1)."""

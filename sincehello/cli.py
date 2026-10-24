@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 
 import typer
 
 from sincehello import config
+from sincehello.analysis import compute_all
+from sincehello.analysis.render import render
 from sincehello.connectors import registry
 from sincehello.store import Store
 
@@ -58,3 +61,37 @@ def people(limit: Annotated[int, typer.Option(help="Max rows.")] = 20) -> None:
     for p in rows:
         name = p.display_name or (p.handles[0] if p.handles else f"person {p.person_id}")
         typer.echo(f"{p.person_id:>5}  {p.message_count:>8}  {name}  ({', '.join(p.handles)})")
+
+
+@app.command()
+def stats(
+    person_id: Annotated[int, typer.Argument(help="Person id, from `sincehello people`.")],
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+    gap_hours: Annotated[
+        float, typer.Option(help="Silence that makes the next message a new conversation.")
+    ] = 6.0,
+    tz: Annotated[str | None, typer.Option(help="Timezone for people with no tz periods.")] = None,
+) -> None:
+    """Local stats for your 1:1 conversations with one person (no LLM)."""
+    with Store(config.store_path()) as store:
+        try:
+            results = compute_all(
+                store,
+                person_id,
+                default_tz=tz,
+                gap_hours=gap_hours,
+                max_reply_hours=gap_hours,
+            )
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+        name = next(
+            (p.display_name or p.handles[0] for p in store.people() if p.person_id == person_id),
+            f"person {person_id}",
+        )
+    if as_json:
+        out = {"person_id": person_id, "stats": {k: r.to_dict() for k, r in results.items()}}
+        typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+    for line in render(results, name):
+        typer.echo(line)
