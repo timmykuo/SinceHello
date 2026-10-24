@@ -119,8 +119,9 @@ class Connector(Protocol):
         # e.g. "needs Full Disk Access", "no export found", "ready", "last synced 2d ago"
     def setup_instructions(self) -> list[str]: ...
         # guided steps shown to the user
-    def ingest(self, store: Store, since: datetime | None) -> IngestReport: ...
-        # incremental when possible; idempotent (re-running never duplicates)
+    def ingest(self, store: Store) -> IngestReport: ...
+        # idempotent (re-running never duplicates); incremental via an opaque
+        # per-connector cursor: store.get_cursor(id) / store.set_cursor(id, ...)
 ```
 
 Every connector writes into the same normalized schema (§5), and nothing downstream
