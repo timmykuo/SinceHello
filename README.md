@@ -14,3 +14,17 @@ uv run pytest
 ```
 
 All data stays local under `~/.sincehello` (override with `SINCEHELLO_HOME`).
+
+## CI
+
+Every pull request and every push to `main` runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+on Python 3.11 and 3.13: `uv sync --locked`, `ruff format --check`, `ruff check`, and
+`pytest`. It is fast, free, and deterministic, and never calls the Claude API. LLM evals
+(SPEC §10) will run in a separate, manually triggered workflow.
+
+Run the same checks locally before pushing:
+
+```sh
+uv sync --locked
+uv run ruff format --check . && uv run ruff check . && uv run pytest
+```
