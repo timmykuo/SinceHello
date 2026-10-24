@@ -161,9 +161,12 @@ knows which app a message came from except through the `source` field.
   - One person often has **several handles** (a phone number plus an Apple ID email).
     These get merged in identity resolution (§6).
   - Attachments-only messages (U+FFFC placeholder) are counted for stats but carry no text.
-- **Contact names:** optionally read the macOS AddressBook database
-  (`~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`) to map
-  handles to names for the person picker. If that's unavailable, fall back to the raw handle.
+- **Contact names (planned, deferred from M1):** read the macOS AddressBook database
+  (`~/Library/Application Support/AddressBook/Sources/*/AddressBook-v22.abcddb`, also
+  behind Full Disk Access; snapshot it like `chat.db`) to map handles to names for the
+  person picker and to feed automatic merges (§6). If that's unavailable, fall back to the
+  raw handle. On the first real ingest, a top contact's phone and iCloud email showed up as
+  two separate people in `sincehello people`; a shared contact card would have merged them.
 - **Ids:** `source_msg_id` is `message.guid` and `source_conv_id` is `chat.guid`, never
   `ROWID`. iCloud sync can re-insert or merge rows under new ROWIDs, and dedupe has to
   survive that.
@@ -567,7 +570,8 @@ Key libraries: `anthropic`, `pydantic`, `typer`, `ruptures`, `sqlite3`/FTS5, `py
 7. **M7 — Timezone inference:** sleep-window shift detection, agent naming, confirm
    flow, cross-timezone insights. Synthetic scenarios get a planted long-distance era.
 8. **M8 — Iterate:** tune prompts, effort, and tools against the evals.
-9. **Later:** guided connectors (Instagram, Messenger, WhatsApp), TypeScript story-card UI,
+9. **Later:** AddressBook contacts (names in `sincehello people`, merges for handles on the
+   same contact card; §4.2), guided connectors (Instagram, Messenger, WhatsApp), TypeScript story-card UI,
    image export, bulk "deep mode", reactions and images, year-in-review mode,
    group chats, mixed-language support (stopwords, lexicons, CJK segmentation, trigram FTS).
 
