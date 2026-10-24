@@ -90,7 +90,15 @@ def default_messages() -> list[MessageRecord]:
         msg(1, "c-alex", False, "hi! it's alex from the party"),
         msg(2, "c-alex", True, "hello!! so glad you texted"),
         msg(3, "c-alex", False, "i love you"),
-        msg(4, "c-alex", True, 'Loved "i love you"', is_reaction=True),
+        msg(
+            4,
+            "c-alex",
+            True,
+            'Loved "i love you"',
+            is_reaction=True,
+            reacts_to="3",
+            reaction_kind="love",
+        ),
         msg(5, "c-group", False, "group hangout friday?", sender="+15550002222"),
     ]
 

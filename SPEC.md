@@ -20,7 +20,7 @@ The product goal is a fun, accurate "Wrapped" for one relationship.
 | v1 source | **iMessage only**, read straight from `chat.db` on my Mac. |
 | Later sources | Instagram, Messenger, WhatsApp, via guided exports (see §4.3). |
 | Unofficial bridges/scrapers | Out of scope. We can revisit later. |
-| Content types | **Text only** in v1. No images, voice memos, or tapback analysis. |
+| Content types | **Text only** in v1. No images or voice memos. Reactions are excluded from text analysis, but each one is stored with a link to the message it reacts to and its kind (love, laugh, ...), so insights like "most-hearted message" are possible. |
 | Scope of one analysis | **One person, all time**, across every connected app. **1:1 conversations only**; group chats come later. |
 | Sensitive moments | **Included**: fights, makeups and hard stretches are fair game, with no softening for now. We can tune the tone later. |
 | Agent loop | **Hand-written manual loop.** |
@@ -150,6 +150,11 @@ knows which app a message came from except through the `source` field.
     messages like `Loved "…"`. Since v1 is text-only, store them flagged
     `is_reaction=1` and **exclude them from text analysis**, or "Loved" becomes
     the top word.
+  - Each tapback also records **what it reacts to and how**. `reacts_to` is the target's
+    `guid`, taken from `associated_message_guid` after stripping its `p:N/` or `bp:` prefix.
+    `reaction_kind` maps 2000–2006 to love, like, dislike, laugh, emphasize, question,
+    emoji (verify these against the real DB). The 3000–3006 codes *remove* an earlier tapback:
+    don't emit the removal, and drop the reaction it cancels.
   - Edited and unsent messages (macOS 13+): keep the final text and set an `edited` flag.
   - **Group vs. 1:1:** `chat.style` 45 = 1:1 and 43 = group, verified on a real DB (every
     style-45 chat had exactly one other member; style-43 chats had 1–N, since a group can
@@ -200,6 +205,7 @@ message(
   sender_handle_id, is_from_me,
   sent_at_utc,
   text, is_reaction, has_attachment, edited,
+  reacts_to_source_msg_id, reaction_kind,   -- reactions only; no FK, target may arrive later
   UNIQUE(source, source_msg_id)
 )
 message_fts  -- FTS5 virtual table over message.text (for the search tool)
