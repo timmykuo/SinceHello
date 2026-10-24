@@ -1,0 +1,91 @@
+{
+  "id": "noodle-summit",
+  "description": "Maya and Jordan in London, same timezone throughout. Planted: Maya texts first and says 'i love you' first, Jordan's pet name 'noodle' from month 3, the meatball summit inside joke, a birthday as the busiest day, a fight over a missed flight, and Maya as the faster replier.",
+  "start": "2019-09-01",
+  "duration_days": 365,
+  "target_messages": 6000,
+  "personas": {
+    "me": {
+      "name": "Maya Patel",
+      "style": {"lowercase": 0.2, "emoji_rate": 0.25, "emojis": ["😊", "🙈", "❤️", "😅"],
+                "exclaim": 0.35, "abbrev": 0.05, "double_text": 0.5},
+      "sleep": ["23:30", "06:45"],
+      "reply_median_s": 60
+    },
+    "them": {
+      "name": "Jordan Lee",
+      "handle": "jordan.lee@example.com",
+      "style": {"lowercase": 0.6, "emoji_rate": 0.05, "emojis": ["👍", "🙂"],
+                "exclaim": 0.05, "abbrev": 0.2, "double_text": 0.1},
+      "sleep": ["00:15", "07:30"],
+      "reply_median_s": 900
+    }
+  },
+  "timezones": {
+    "me": [{"start": "2019-09-01T00:00:00Z", "tz": "Europe/London"}],
+    "them": [{"start": "2019-09-01T00:00:00Z", "tz": "Europe/London"}]
+  },
+  "eras": [
+    {"id": "era_1", "name": "Pub quiz to first dates", "start": "2019-09-01", "volume": 0.8,
+     "topics": ["plans", "daily", "food", "work"]},
+    {"id": "era_2", "name": "Winter of takeaways", "start": "2019-11-15", "volume": 1.2,
+     "topics": ["food", "shows", "daily", "family", "plans"]},
+    {"id": "era_3", "name": "Spring routines", "start": "2020-03-01", "volume": 1.0,
+     "topics": ["work", "gym", "daily", "shows", "weekend"]}
+  ],
+  "initiator_share": {"them": 0.35},
+  "reaction_share": 0.03,
+  "attachment_share": 0.01,
+  "edited_share": 0.02,
+  "group_chat": {
+    "id": "flatmates",
+    "name": "flat 4b",
+    "friends": [
+      {"key": "tom", "name": "Tom Hughes", "handle": "+447700900123"},
+      {"key": "ana", "name": "Ana Souza", "handle": "+447700900456"}
+    ],
+    "share": 0.05,
+    "script": [
+      {"at": "2019-10-02T20:30",
+       "script": [["tom", "love you lot, thanks for the birthday cake"], ["ana", "ily tom", 25]]}
+    ]
+  },
+  "reserved": ["\\blov(e|ed|es|ing)\\b", "\\bily\\b", "noodle", "meatball"],
+  "facts": [
+    {"id": "first_message", "type": "first_message", "at": "2019-09-01T21:05",
+     "script": [["me", "hi jordan! it's maya from the pub quiz, our team name was terrible"],
+                ["them", "it really was. hi maya", 600]]},
+    {"id": "first_ily", "type": "first_phrase", "phrase": "i love you",
+     "pattern": "\\b(i love you|love you|ily|love u)\\b",
+     "at": "2019-12-24T22:10",
+     "script": [["me", "i love you. there, i said it first"], ["them", "i love you too maya", 95]]},
+    {"id": "pet_noodle", "type": "pet_name", "term": "noodle",
+     "first": {"at": {"month": 3, "day_range": [3, 18], "time": "08:10"},
+               "script": [["them", "morning noodle"], ["me", "noodle?? 😅", 40]]},
+     "rates": {"me": 0.01, "them": 0.05},
+     "forms": ["{text} noodle", "noodle {text}", "morning noodle", "night noodle"]},
+    {"id": "meatball_summit", "type": "inside_joke", "phrase": "meatball summit",
+     "pattern": "\\bmeatball summit\\b", "at": "2019-10-19T19:40",
+     "script": [["them", "the ikea cafe is out of meatballs"],
+                ["me", "an emergency summit is required", 30],
+                ["them", "the meatball summit is now in session", 45]],
+     "callbacks": {"count": 15, "min_days_after": 7,
+                   "templates": ["calling an emergency meatball summit",
+                                 "this needs a meatball summit",
+                                 "meatball summit rules apply"]}},
+    {"id": "birthday", "type": "busiest_day", "date": "2020-04-11",
+     "window": ["09:00", "19:30"], "factor": 8, "min_messages": 60, "max_messages": 900,
+     "topic": "plans", "reason": "Maya's birthday",
+     "script": [["them", "happy birthday maya!!"], ["me", "thank you!! 😊", 30]]},
+    {"id": "missed_flight", "type": "conflict_makeup", "at": "2020-01-26T18:20",
+     "script": [["me", "you missed the flight?? we planned this for months"],
+                ["them", "i know. i'm sorry. the train was cancelled", 240],
+                ["me", "you could have left earlier", 30],
+                ["them", "can we not do this over text", 300]],
+     "silence_hours": 58,
+     "makeup": [["them", "i'm sorry. i should have left earlier. let me make it up to you"],
+                ["me", "ok. i missed you", 120]]},
+    {"id": "reply_speed", "type": "reply_speed", "faster": "me"},
+    {"id": "texts_first", "type": "texts_first", "sender": "me", "gap_hours": 6}
+  ]
+}

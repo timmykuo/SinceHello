@@ -6,8 +6,17 @@ from collections.abc import Callable
 
 from sincehello.connectors.base import Connector
 
+
+def _synthetic() -> Connector:
+    from sincehello.connectors.synthetic import SyntheticConnector
+
+    return SyntheticConnector()
+
+
 # id -> zero-arg factory. Factories keep imports and setup lazy.
-CONNECTORS: dict[str, Callable[[], Connector]] = {}
+CONNECTORS: dict[str, Callable[[], Connector]] = {
+    "synthetic": _synthetic,
+}
 
 
 def get(connector_id: str) -> Connector:

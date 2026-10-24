@@ -11,6 +11,7 @@ uv sync
 uv run sincehello connect      # list connectors
 uv run sincehello people       # people by message count
 uv run pytest
+uv run sincehello connect synthetic   # load the synthetic sample (evals/README.md)
 ```
 
 All data stays local under `~/.sincehello` (override with `SINCEHELLO_HOME`).

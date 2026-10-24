@@ -20,6 +20,9 @@ a module, and update the spec when a decision changes.
   never write SQL directly. Changing the schema means bumping `SCHEMA_VERSION` and adding
   a migration.
 - `tests/`: `conftest.py` has `FakeConnector`, an example connector, and fixtures.
+- `evals/`: synthetic histories with planted facts (SPEC §10.1). Format and commands in
+  `evals/README.md`; `connectors/synthetic.py` loads them. Regenerate the committed sample
+  after changing the generator, or `test_committed_sample_is_reproducible` fails.
 
 ## Rules
 
