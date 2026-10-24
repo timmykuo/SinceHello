@@ -537,4 +537,5 @@ Key libraries: `anthropic`, `pydantic`, `typer`, `ruptures`, `sqlite3`/FTS5, `py
    you confirm? Suggestions could come from (a) shifts in each person's daily quiet
    or sleep window, and (b) mentions like "just landed in Tokyo" found by the agent.
 2. **Languages:** which languages do you text in? This decides how much local
-   tokenizer, search, and lexicon work is needed (see the chat discussion).
+   tokenizer, search, and lexicon work is needed. The LLM parts handle mixed language
+   natively; the local parts (word counts, search, lexicons) are what need work.
