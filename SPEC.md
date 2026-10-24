@@ -23,7 +23,10 @@ The product goal is a fun, accurate "Wrapped" for one relationship.
 | Content types | **Text only** in v1. No images, voice memos, or tapback analysis. |
 | Scope of one analysis | **One person, all time**, across every connected app. **1:1 conversations only**; group chats come later. |
 | Sensitive moments | **Included**: fights, makeups and hard stretches are fair game, with no softening for now. We can tune the tone later. |
-| Agent loop | **Hand-written manual loop** in v1. Moving to the SDK Tool Runner later is optional. |
+| Agent loop | **Hand-written manual loop.** |
+| Report voice | **Second person**: "you" and the other person's name, e.g. "You and Alex…". |
+| Run-to-run variation | **Fine for runs to differ.** We can experiment with determinism later. |
+| Timezones | **Relative, per sender** (§6.1): stats use each sender's local time, with cross-timezone insights for long-distance stretches. |
 | Critic model | **Opus 5.5 to start**, then try a cheaper model and let evals decide. |
 | LLM | **Claude API.** |
 | Data sent to Claude | **Snippets only**, fetched through agent tools, plus computed stats. A bulk "deep mode" is a later opt-in. |
@@ -131,7 +134,8 @@ knows which app a message came from except through the `source` field.
 - **Tables used:** `message`, `handle`, `chat`, `chat_message_join`, `chat_handle_join`.
 - **Gotchas the connector must handle:**
   - `message.date` counts **nanoseconds since 2001-01-01 UTC** (the Apple epoch).
-    Convert it, then store UTC plus the local timezone offset.
+    Convert it and store **UTC only**. `chat.db` has no record of either sender's
+    timezone, so local time is derived later from the timezone timeline (§6.1).
   - On newer macOS, `message.text` is often NULL and the text lives in the
     `attributedBody` blob (an NSAttributedString typedstream), so we need a decoder.
     This is the riskiest part of the connector and needs tests against real samples.
@@ -174,11 +178,12 @@ conversation_member(conversation_id, handle_id)
 message(
   id, source, source_msg_id, conversation_id,
   sender_handle_id, is_from_me,
-  sent_at_utc, tz_offset_min,
+  sent_at_utc,
   text, is_reaction, has_attachment, edited,
   UNIQUE(source, source_msg_id)
 )
 message_fts  -- FTS5 virtual table over message.text (for the search tool)
+tz_period(person_id, start_utc, end_utc NULL, iana_tz, source)  -- source: default | user | inferred_confirmed
 ```
 
 Derived tables, all rebuilt per analysis run and cached:
@@ -197,6 +202,22 @@ The goal: **one Person = every handle, on every app, that belongs to the same hu
   wrong person would wreck the report.
 - The user's own handles are marked as `is_me`.
 
+### 6.1 Timezone timeline (per person)
+
+Each person (you **and** them) gets their own timeline of timezone periods. Every
+message is then viewed in **the sender's local time**, and the other person's local
+time is still available for cross-timezone insights.
+
+- Default: everyone is in the Mac's current timezone for all time.
+- The user can add periods ("Alex: Asia/Tokyo, 2022-06 → 2023-08").
+- Stats are computed against the sender's own local clock. "Alex texts at 2am" means
+  2am Alex time.
+- This unlocks cross-timezone insights for long-distance eras. For example: "During
+  the Tokyo year, your 7am good-morning texts landed at 11pm for Alex", "you
+  stayed up until 1am your time to catch their lunch break", and "the overlap window
+  you both lived in".
+- How periods get filled in beyond manual entry is an open question (§15).
+
 ---
 
 ## 7. Analysis pipeline
@@ -207,11 +228,14 @@ These are computed over all messages with the chosen person. Exact numbers alway
 come from here, never from the LLM.
 
 - Message totals per person, per year and month, and per weekday × hour heatmap
+  (in each sender's local time)
 - First message ever (and who sent it), plus "since hello" duration
 - Busiest day ever, longest silence, longest daily streak
 - **Who texts first**: the share of conversation-starts after a gap of ≥ N hours, for each person
 - Reply-time distributions (median, by person, by era)
-- Late-night share (00:00–04:00 local)
+- Late-night share (00:00–04:00 in the **sender's** local time)
+- Cross-timezone stats for periods where your timezones differ: overlap window,
+  messages sent during the other person's night, "waiting for them to wake up" gaps
 - Top words (stopwords removed), top bigrams and trigrams, top emoji, by person
 - **Distinctive phrases**: words and n-grams that are frequent here but rare in a
   baseline. The baseline is the user's other conversations or a general English
@@ -509,11 +533,8 @@ Key libraries: `anthropic`, `pydantic`, `typer`, `ruptures`, `sqlite3`/FTS5, `py
 
 ## 15. Open questions
 
-1. **"Me" in the report:** should insights be written as "you" and "Alex", or with both
-   names in the third person ("<your name> and Alex"), which is better for sharing later?
-2. **Timezones:** if either of you moved or traveled, local time for late-night stats
-   is ambiguous. Use the Mac's current timezone, or let you set timezone periods?
-3. **Language:** English only, or should the lexicons and stopwords handle other
-   languages or mixed-language texting?
-4. **Re-runs:** should a second run on the same person be deterministic, or is it fine
-   (even fun) if the agent finds different insights each time?
+1. **Filling in timezone periods:** manual entry only, or also auto-suggestions that
+   you confirm? Suggestions could come from (a) shifts in each person's daily quiet
+   or sleep window, and (b) mentions like "just landed in Tokyo" found by the agent.
+2. **Languages:** which languages do you text in? This decides how much local
+   tokenizer, search, and lexicon work is needed (see the chat discussion).
