@@ -21,7 +21,10 @@ The product goal is a fun, accurate "Wrapped" for one relationship.
 | Later sources | Instagram, Messenger, WhatsApp, via guided exports (see §4.3). |
 | Unofficial bridges/scrapers | Out of scope. We can revisit later. |
 | Content types | **Text only** in v1. No images, voice memos, or tapback analysis. |
-| Scope of one analysis | **One person, all time**, across every connected app. |
+| Scope of one analysis | **One person, all time**, across every connected app. **1:1 conversations only**; group chats come later. |
+| Sensitive moments | **Included**: fights, makeups and hard stretches are fair game, with no softening for now. We can tune the tone later. |
+| Agent loop | **Hand-written manual loop** in v1. Moving to the SDK Tool Runner later is optional. |
+| Critic model | **Opus 5.5 to start**, then try a cheaper model and let evals decide. |
 | LLM | **Claude API.** |
 | Data sent to Claude | **Snippets only**, fetched through agent tools, plus computed stats. A bulk "deep mode" is a later opt-in. |
 | Redaction | None in v1. |
@@ -137,6 +140,8 @@ knows which app a message came from except through the `source` field.
     `is_reaction=1` and **exclude them from text analysis**, or "Loved" becomes
     the top word.
   - Edited and unsent messages (macOS 13+): keep the final text and set an `edited` flag.
+  - **1:1 only (v1):** ingest every conversation, but analysis uses only conversations
+    where `conversation.is_group = 0`. Group chats are stored for later use.
   - `is_from_me` gives the sender direction. In 1:1 chats the other sender comes from `handle_id`.
   - One person often has **several handles** (a phone number plus an Apple ID email).
     These get merged in identity resolution (§6).
@@ -234,8 +239,8 @@ These give the agent leads to check. They don't decide anything.
 - Pet-name candidates: short tokens that appear at message start or end, that one
   person uses a lot more than the other, and that aren't in a standard dictionary.
 - Spikes: days with volume > 3σ above the mean (often big moments).
-- Possible conflicts: long gaps followed by apology terms. This is **sensitive**
-  (see §12).
+- Conflicts and makeups: long gaps or sharp drops in tone, followed by apology terms.
+  These are included as insights (see §12).
 
 ### 7.4 Agent tools (the only window Claude has into the messages)
 
@@ -264,9 +269,12 @@ Tool design rules:
 
 - **Model:** `claude-opus-5-5` by default (configurable, §9), with adaptive thinking
   and an explicit `effort` setting. Effort is the lever to tune in evals.
-- **Loop implementation:** a **hand-written manual loop**, with the SDK Tool Runner as
-  an alternative. Hand-writing it is the point of the learning exercise; see the open
-  questions.
+- **Loop implementation:** a **hand-written manual loop** (`while stop_reason ==
+  "tool_use"`), built on the plain `anthropic` SDK without an agent framework. It's
+  about 100 lines, and owning it makes the budget guard, egress logging, the
+  verification hook in `propose_insight`, and mid-run system messages
+  straightforward. Moving to the SDK Tool Runner later is an option once the loop is
+  well understood.
 - **System prompt sets:** the goal (find warm, specific, *true* insights), the seed
   categories (§8), the rule "every claim must cite message ids, and numbers must come
   from stats or count tools", and the tone guidelines (§12).
@@ -356,7 +364,7 @@ than fresh input.
 | Role | Default model | Notes |
 |---|---|---|
 | Discovery agent | `claude-opus-5-5` | Effort tuned via evals |
-| Critic | `claude-opus-5-5` | Could drop to Sonnet if evals show no quality loss (your call) |
+| Critic | `claude-opus-5-5` | Starts on the strongest model to set the quality bar. Later, eval `claude-sonnet-5-5`/`claude-haiku-5-5` as the critic, and switch only if agreement with the Opus critic and with human ratings holds |
 | LLM judge (evals only) | `claude-opus-5-5` | Batch API for eval runs (50% cheaper) |
 
 **Rough estimate for one run** (to be measured, not trusted). A 60-turn agent loop
@@ -393,8 +401,11 @@ partial report once the projected spend crosses it. The cost-per-run is recorded
 
 ### 10.2 LLM-as-judge
 
-- A rubric score from 1–5 on accuracy, specificity, delight, tone/kindness, and
+- A rubric score from 1–5 on accuracy, specificity, delight, tone, and
   non-obviousness, run on every insight in a report.
+- The judge is a **separate prompt and rubric from the pipeline critic** (§7.6). That
+  way the eval doesn't share the critic's blind spots and doesn't just grade the
+  pipeline against itself.
 - Pairwise mode for comparing two pipeline versions: "which deck is better?",
   with the order randomized.
 
@@ -440,9 +451,11 @@ The later TypeScript UI is a front end for these same commands and the
 - **Transparency:** every run reports how many messages were shared and which ones
   (`egress_log`), and the user can inspect it.
 - **API key:** stored in an env var or keychain, never written to the repo.
-- **Tone guardrails** (system prompt plus critic rubric): warm, playful, never mean.
-  - By default, don't surface fights, breakups, exes, or third-party drama.
-  - Conflict-related insights are off by default, behind a flag (see open questions).
+- **Tone** (system prompt plus critic rubric): honest and specific. Fights, makeups,
+  hard stretches, and breakups-and-reunions are **included** with no softening in
+  v1. Tone is a single prompt/rubric section so it's easy to adjust later.
+  Third parties (exes, friends) appear only when they are part of the
+  story between the two of you.
 - **Other people's privacy:** this person never consented to analysis. That's fine
   for personal use. For the "others use it" future, the README should frame it as a
   gift-making tool for your own conversations.
@@ -496,19 +509,11 @@ Key libraries: `anthropic`, `pydantic`, `typer`, `ruptures`, `sqlite3`/FTS5, `py
 
 ## 15. Open questions
 
-1. **Group chats:** count only 1:1 conversations with the person, or also group chats
-   they're in (only their messages plus yours)? 1:1 only is simpler and less noisy.
-2. **Conflict and sensitive insights:** off entirely, off by default with a flag, or
-   allowed but gentle ("the time you made up")?
-3. **Manual loop vs. SDK Tool Runner:** the spec recommends hand-writing the loop for
-   learning value. Do you want that, or the Tool Runner to get to results faster?
-4. **Critic model:** keep Opus 5.5 for the critic, or try a cheaper model and let
-   evals decide?
-5. **"Me" in the report:** should insights be written as "you" and "Alex", or with both
+1. **"Me" in the report:** should insights be written as "you" and "Alex", or with both
    names in the third person ("<your name> and Alex"), which is better for sharing later?
-6. **Timezones:** if either of you moved or traveled, local time for late-night stats
+2. **Timezones:** if either of you moved or traveled, local time for late-night stats
    is ambiguous. Use the Mac's current timezone, or let you set timezone periods?
-7. **Language:** English only, or should the lexicons and stopwords handle other
+3. **Language:** English only, or should the lexicons and stopwords handle other
    languages or mixed-language texting?
-8. **Re-runs:** should a second run on the same person be deterministic, or is it fine
+4. **Re-runs:** should a second run on the same person be deterministic, or is it fine
    (even fun) if the agent finds different insights each time?
