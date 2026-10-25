@@ -6,16 +6,13 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
+    "anthropic>=2.3.0",
+    "pydantic>=2.7",
     "typer>=0.12",
 ]
 
 [project.scripts]
 sincehello = "sincehello.cli:app"
-
-[project.optional-dependencies]
-llm = [
-    "anthropic>=2.3.0",
-]
 
 [dependency-groups]
 dev = [

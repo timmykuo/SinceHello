@@ -474,6 +474,36 @@ Tool design rules:
 - **Refusals:** check `stop_reason == "refusal"` and enable server-side fallbacks.
   Intimate content can trip classifiers, so log refusals and continue with other categories.
 
+Implementation notes (`sincehello/agent/`, M4):
+
+- `tools.py` holds the §7.4 tools as plain functions over a `ToolContext` (`context.py`),
+  with `strict: true` schemas in a fixed order. Tool errors, including failed
+  `propose_insight` checks, return as `is_error` results with the reason. `sample_era` and
+  `list_candidates` register only when `analysis/eras.py` / `analysis/miners.py` exist.
+  `count` groups by sender, year or month; grouping by era waits on the `Era` object
+  exposing its time range.
+- Message ids are `source:source_msg_id`. Every message the tools return goes through
+  one function that truncates text to 500 characters and writes the egress log. Ids that
+  go out without text (inside stat results) are logged with `with_text: false` and don't
+  count toward `messages_shared`.
+- `loop.py` is the manual loop: streaming `client.beta.messages`, adaptive thinking
+  (`display: "summarized"`), explicit `effort` (default `high`), `tool_choice` auto,
+  `fallbacks: "default"`, a `task_budget` of 60% of the dollar cap priced at the output
+  rate (min 20k tokens), cache breakpoints on the system prompt and the history.
+  The history is append-only (thinking blocks are bound to their prefix): wrap-up and
+  refusal notes are appended `role: "system"` messages. A refused turn's partial output is
+  dropped; three refusals in a row end the run. Parallel tool calls run sequentially
+  and are answered in one user message. Wrap-up fires at 80% of the budget or 3 turns
+  before the cap.
+- `budget.py` prices `usage` per model (per attempt from `usage.iterations` after a
+  fallback). Before each request it stops if `spent + max(last turn, average turn)`
+  would cross `--max-cost`, so a run can only overshoot by one turn's misestimate.
+- Run output: `~/.sincehello/runs/<run_id>/run_log.jsonl` (static request once, then
+  each request's new messages, each full response with usage and cost, each tool
+  call), `report.json` (§8.1, `deck` empty until curation), `egress.json`.
+- `propose_insight` runs the §7.6 step 1 checks in `verify/checks.py`; the M5 critic
+  plugs in as `ToolContext.critic` (`tools.Critic`).
+
 ### 7.6 LOOP 2 — verification
 
 Each proposed insight passes through:
@@ -533,8 +563,16 @@ Each proposed insight passes through:
 ```
 
 Top-level `report.json` fields: `person`, `range`, `sources`, `deck[]` (ordered insight
-ids), `insights[]`, `eras[]`, `stats{}`, and `run{cost_usd, tokens, turns,
-messages_shared, pct_shared, model, version}`.
+ids), `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text), and
+`run{run_id, status, cost_usd, tokens, turns, messages_shared, pct_shared, model, effort,
+version}`. Pydantic models live in `sincehello/report/schema.py`.
+
+Two additions to the insight, so its claims can be re-checked (§7.6): `metric.path` is a
+dotted path into the query's value (`"share.them"`, `"top.0.date"`) and `metric.value`
+is the value there; `first: {pattern, sender}` is required for `kind:
+"first_occurrence"`. `count` and `first_occurrence` return their own query ids
+(`q_count_…`, `q_first_…`), recomputable within a run. Stats, counts and `rhythm`
+insights must carry a metric.
 
 ---
 
@@ -627,9 +665,11 @@ sincehello stats <person> [--json] # local stats only (§7.1), no LLM
 sincehello merge <person> <handle> # manual identity merge
 sincehello analyze <person> [--max-cost 5] [--deck-size 15]
                                    # the "one click": sync all connected sources → analyze
+                                   # (M4: --model, --effort, --max-turns; no sync or deck yet)
 sincehello report <run-id>         # print report.md
 sincehello rate <run-id>           # human rating pass
 sincehello eval [--suite synthetic]
+sincehello eval agent --sample bean-goose   # M4 hook: agent recall of planted facts
 ```
 
 The later TypeScript UI is a front end for these same commands and the
