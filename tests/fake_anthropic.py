@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import itertools
+import json
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -66,6 +67,35 @@ def refusal(category: str = "bio") -> BetaMessage:
         usage={"input_tokens": 300, "output_tokens": 0, "cache_read_input_tokens": 12_000},
         stop_details={"type": "refusal", "category": category, "explanation": "declined"},
     )
+
+
+# A critic call (verify/critic.py): a cached system prompt, one fresh user message.
+CRITIC_USAGE = {
+    "input_tokens": 2_500,
+    "output_tokens": 1_200,
+    "cache_read_input_tokens": 1_800,
+}
+
+
+def critic_reply(
+    verdict: str = "pass", issues: list[str] | None = None, **scores: int
+) -> BetaMessage:
+    """A critic response: structured output is the JSON text block."""
+    out = {
+        "issues": issues or [],
+        "scores": {"accuracy": 5, "specificity": 4, "delight": 4, "tone": 5, **scores},
+        "verdict": verdict,
+    }
+    return message(
+        thinking("checked the excerpts"),
+        text(json.dumps(out)),
+        stop_reason="end_turn",
+        usage=CRITIC_USAGE,
+    )
+
+
+def is_critic(request: dict[str, Any]) -> bool:
+    return "format" in request.get("output_config", {})
 
 
 Step = BetaMessage | Exception | Callable[[dict[str, Any]], BetaMessage]

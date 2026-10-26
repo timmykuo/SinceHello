@@ -27,8 +27,9 @@ a module, and update the spec when a decision changes.
 - `sincehello/agent/`: the discovery agent (SPEC §7.4–7.5): `tools.py` (tools + strict
   schemas), `loop.py` (the manual loop), `budget.py`, `runlog.py`, `prompts/`. Keep
   `prompts/system.md` free of run-specific text so the cached prefix stays byte-stable.
-  `verify/checks.py` has the deterministic insight checks; `report/schema.py` the
-  `report.json` models.
+  `verify/checks.py` has the deterministic insight checks and `verify/critic.py` the LLM
+  critic (SPEC §7.6; its prompt `verify/critic.md` is the cached prefix, keep it stable
+  too); `report/schema.py` the `report.json` models.
 - `tests/`: `fake_anthropic.py` has `ScriptedClient`, the offline stand-in for the API
   client; tests must never call the real API. `conftest.py` has `FakeConnector`, an
   example connector, `ScriptedConnector`
