@@ -226,7 +226,15 @@ The goal: **one Person = every handle, on every app, that belongs to the same hu
 - Cross-app merges are manual in v1. The user confirms "this IG username is the same
   person as this phone number". There's no fuzzy auto-merge in v1, because merging the
   wrong person would wreck the report.
-- The user's own handles are marked as `is_me`.
+- The user's own handles are marked as `is_me` (`sincehello me <handle>` moves a handle to
+  the `is_me` person, so it drops out of `sincehello people`).
+- Phone normalization is a small built-in normalizer (`store/identity.py`), not
+  libphonenumber: `+<country><number>` keeps its digits, and a bare 10-digit number (or 11
+  digits starting with 1) is read as US/NANP (`+1`). Other bare numbers and short codes are
+  never auto-merged.
+- Automatic merges run after every ingest (`write_batch`). A manual merge moves a handle
+  along with any handles that share its E.164 number, and deletes the person it leaves empty.
+  A person's message count covers every 1:1 conversation with any of their handles.
 
 ### 6.1 Timezone timeline (per person)
 
@@ -740,7 +748,8 @@ sincehello connect                 # list connectors and their status
 sincehello connect imessage        # check access, ingest
 sincehello people                  # list people, by message count
 sincehello stats <person> [--json] # local stats only (§7.1), no LLM
-sincehello merge <person> <handle> # manual identity merge
+sincehello merge <person> <handle> # manual identity merge (person id or one of their handles)
+sincehello me <handle>             # mark a handle as your own
 sincehello analyze <person> [--max-cost 5] [--deck-size 15]
                                    # the "one click": sync all connected sources → analyze
                                    # (M4: --model, --effort, --max-turns; no sync or deck yet)
