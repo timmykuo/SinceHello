@@ -15,3 +15,6 @@ imports/
 
 # Generated synthetic histories (the committed sample lives in evals/samples/)
 synthetic/
+
+# Verification runs (.claude/skills/verify-sincehello)
+.verify/
