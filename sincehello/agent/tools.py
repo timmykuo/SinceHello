@@ -446,10 +446,11 @@ def _insight_schema() -> dict[str, Any]:
         },
         ["query_id", "path", "value"],
     )
-    first = _obj(
-        {"pattern": {"type": "string"}, "sender": SENDER},
-        ["pattern", "sender"],
-    )
+    first = {
+        **_obj({"pattern": {"type": "string"}, "sender": SENDER}, ["pattern", "sender"]),
+        "description": "Only for kind first_occurrence (ignored otherwise): the pattern and"
+        " sender you checked with first_occurrence.",
+    }
     return _obj(
         {
             "category": {

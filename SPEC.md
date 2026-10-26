@@ -503,13 +503,18 @@ Implementation notes (`sincehello/agent/`, M4):
   count toward `messages_shared`.
 - `loop.py` is the manual loop: streaming `client.beta.messages`, adaptive thinking
   (`display: "summarized"`), explicit `effort` (default `high`), `tool_choice` auto,
-  `fallbacks: "default"`, a `task_budget` of 60% of the dollar cap priced at the output
-  rate (min 20k tokens), cache breakpoints on the system prompt and the history.
+  `fallbacks: "default"`, a `task_budget` sized to run out at the 80% wrap-up point
+  (min 20k tokens), cache breakpoints on the system prompt and the history.
   The history is append-only (thinking blocks are bound to their prefix): wrap-up and
   refusal notes are appended `role: "system"` messages. A refused turn's partial output is
   dropped; three refusals in a row end the run. Parallel tool calls run sequentially
   and are answered in one user message. Wrap-up fires at 80% of the budget or 3 turns
   before the cap.
+- `task_budget` only paces the model; the dollar cap is the hard limit. The budget counts
+  output and tool results, not the re-read history, which is mostly cheap cache reads, so
+  one budget token costs well under the output rate. It's calibrated from live runs
+  (`SPEND_PER_BUDGET_TOKEN`, about 0.62x the output price): pricing it at the full output
+  rate gave a $1 cap a 30k budget, and the agent paced itself to stop near $0.37.
 - `budget.py` prices `usage` per model (per attempt from `usage.iterations` after a
   fallback). Before each request it stops if `spent + max(last turn, average turn)`
   would cross `--max-cost`, so a run can only overshoot by one turn's misestimate.
@@ -525,8 +530,11 @@ Each proposed insight passes through:
 
 1. **Deterministic checks**, run in `propose_insight` itself:
    - Every cited `message_id` exists and belongs to this person's conversations.
-   - Quoted text appears verbatim in the cited message.
-   - `first`-type claims: re-run `first_occurrence` with the same pattern; the cited id must match.
+   - Quoted text appears verbatim in the cited message. Whitespace runs, curly vs.
+     straight quotes, and literal `\uXXXX` escapes in the quote (the model sometimes
+     writes non-ASCII that way) don't count as differences.
+   - `first_occurrence` insights: re-run `first_occurrence` with the same pattern; the
+     cited id must match. Other kinds aren't checked against `first`.
    - Numeric claims must reference a stat or count query id. We recompute the query and compare.
    - Failures go straight back to the agent as tool errors, with the reason.
 2. **LLM critic** (a separate call that is not in the agent's context), run on
@@ -650,7 +658,7 @@ version, critic_calls, critic_cost_usd}` (critic spend is included in `cost_usd`
 Two additions to the insight, so its claims can be re-checked (§7.6): `metric.path` is a
 dotted path into the query's value (`"share.them"`, `"top.0.date"`) and `metric.value`
 is the value there; `first: {pattern, sender}` is required for `kind:
-"first_occurrence"`. `count` and `first_occurrence` return their own query ids
+"first_occurrence"` and dropped on other kinds. `count` and `first_occurrence` return their own query ids
 (`q_count_…`, `q_first_…`), recomputable within a run. Stats, counts and `rhythm`
 insights must carry a metric.
 

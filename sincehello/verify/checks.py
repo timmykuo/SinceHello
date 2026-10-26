@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 from sincehello.agent.context import ToolContext, ToolError
@@ -26,7 +27,7 @@ def check(ctx: ToolContext, draft: InsightDraft, era_ids: set[str] | None = None
         except ToolError as e:
             failures.append(f"evidence {ev.message_id}: {e}")
             continue
-        if _norm(ev.quote) not in _norm(m.text):
+        if _norm(_unescape(ev.quote)) not in _norm(m.text):
             failures.append(
                 f"evidence {ev.message_id}: quote {ev.quote!r} is not in the message text"
                 " (quotes must be copied verbatim)"
@@ -68,6 +69,16 @@ def check(ctx: ToolContext, draft: InsightDraft, era_ids: set[str] | None = None
     if draft.era_id is not None and era_ids is not None and draft.era_id not in era_ids:
         failures.append(f"era_id {draft.era_id!r} is not one of {sorted(era_ids)}")
     return failures
+
+
+_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _unescape(quote: str) -> str:
+    """The model sometimes writes non-ASCII as a literal `\\u2019` escape; decode those
+    (surrogate pairs included) so an emoji or curly apostrophe still matches."""
+    s = _ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), quote)
+    return s.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
 
 
 def _norm(s: str) -> str:

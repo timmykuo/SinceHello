@@ -65,6 +65,10 @@ class InsightDraft(_Strict):
     def _kind_requirements(self) -> InsightDraft:
         if self.kind == "first_occurrence" and self.first is None:
             raise ValueError("kind 'first_occurrence' needs `first` (the pattern to re-check)")
+        if self.kind != "first_occurrence":
+            # Only "first time" claims are re-checked; on other kinds a `first` is noise
+            # the agent may fill to satisfy the schema, so it must not gate the insight.
+            self.first = None
         if (self.kind in NUMERIC_KINDS or self.category == "rhythm") and self.metric is None:
             raise ValueError(
                 f"a {self.category}/{self.kind} insight states a number, so it needs `metric`"

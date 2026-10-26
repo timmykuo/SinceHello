@@ -167,7 +167,7 @@ def test_request_shape(bean_goose, tmp_path):
     assert req["model"] == "claude-opus-5-5"
     assert req["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert req["output_config"]["effort"] == "medium"
-    assert req["output_config"]["task_budget"] == {"type": "tokens", "total": 150_000}
+    assert req["output_config"]["task_budget"] == {"type": "tokens", "total": 322_580}
     assert req["tool_choice"] == {"type": "auto"}
     assert req["fallbacks"] == "default"
     assert set(req["betas"]) == {FALLBACK_BETA, TASK_BUDGET_BETA}
@@ -402,3 +402,26 @@ def test_strict_tools_fit_the_api_limit_and_get_stats_takes_param_pairs(bean_goo
     assert not res.get("is_error")
     params = json.loads(res["content"])["params"]
     assert params["gap_hours"] == 12 and params["start_utc"]
+
+
+def test_first_only_gates_first_occurrence_and_escaped_quotes_still_match(bean_goose, tmp_path):
+    # Live runs: an era insight carried a junk `first` and was rejected for it, and a
+    # quote came back with its non-ASCII written as a literal \\uXXXX escape.
+    moment = {
+        "category": "milestone",
+        "kind": "moment",
+        "title": "Said it back",
+        "headline": "You said it back within a minute",
+        "body": "Right away.",
+        "evidence": [{"message_id": SID + "000509", "quote": "i love you too \\ud83e\\udd79"}],
+        "first": {"pattern": "x", "sender": "any"},
+    }
+    script = [
+        message(tool_use("propose_insight", moment)),
+        message(tool_use("finish", {"summary": "done"})),
+    ]
+    result, client = run(bean_goose, tmp_path, script)
+
+    assert not any(r.get("is_error") for r in results_of(client.requests[1]))
+    [insight] = result.report.insights
+    assert insight.first is None
