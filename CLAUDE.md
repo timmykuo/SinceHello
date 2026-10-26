@@ -24,7 +24,15 @@ a module, and update the spec when a decision changes.
   its `query_id`. Results must be JSON-serializable and must not depend on the wall clock.
   `eras.py` (SPEC §7.2) and `miners.py` (§7.3) are the interface the agent tools call;
   keep their signatures stable. Lexicons live in `analysis/lexicon/`.
-- `tests/`: `conftest.py` has `FakeConnector`, an example connector, `ScriptedConnector`
+- `sincehello/agent/`: the discovery agent (SPEC §7.4–7.5): `tools.py` (tools + strict
+  schemas), `loop.py` (the manual loop), `budget.py`, `runlog.py`, `prompts/`. Keep
+  `prompts/system.md` free of run-specific text so the cached prefix stays byte-stable.
+  `verify/checks.py` has the deterministic insight checks and `verify/critic.py` the LLM
+  critic (SPEC §7.6; its prompt `verify/critic.md` is the cached prefix, keep it stable
+  too); `report/schema.py` the `report.json` models.
+- `tests/`: `fake_anthropic.py` has `ScriptedClient`, the offline stand-in for the API
+  client; tests must never call the real API. `conftest.py` has `FakeConnector`, an
+  example connector, `ScriptedConnector`
   for custom fixtures, and fixtures.
 - `evals/`: synthetic histories with planted facts (SPEC §10.1). Format and commands in
   `evals/README.md`; `connectors/synthetic.py` loads them. Regenerate the committed sample

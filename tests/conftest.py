@@ -107,3 +107,13 @@ def default_messages() -> list[MessageRecord]:
 def store(tmp_path) -> Store:
     with Store(tmp_path / "test.db") as s:
         yield s
+
+
+@pytest.fixture
+def bean_goose(tmp_path):
+    """The committed synthetic sample in a fresh store: (store, Alex's person id)."""
+    from sincehello.connectors.synthetic import SyntheticConnector
+
+    with Store(tmp_path / "bean.db") as s:
+        SyntheticConnector().ingest(s)
+        yield s, s.person_for_handle("synthetic", "+12125550142")
