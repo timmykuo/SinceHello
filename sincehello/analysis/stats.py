@@ -27,8 +27,9 @@ from sincehello.analysis.dataset import ME, SENDERS, THEM, Dataset
 from sincehello.store import Store
 from sincehello.store.store import ME_PERSON_ID
 
-# Bump when a stat's definition changes, so old query ids no longer match.
-STATS_VERSION = 1
+# Bump when a stat's definition or parameter names change, so old query ids no longer match.
+# 2: the top-N parameter is `top_n` everywhere (was `k` in the language stats).
+STATS_VERSION = 2
 
 HOUR_MS = 3_600_000
 DAY_MS = 24 * HOUR_MS
@@ -104,7 +105,8 @@ def resolve_params(stat_name: str, params: dict[str, Any] | None = None) -> dict
     params = params or {}
     unknown = sorted(set(params) - set(allowed))
     if unknown:
-        raise ValueError(f"{stat_name} does not take {', '.join(unknown)}")
+        takes = f"it takes: {', '.join(spec.defaults)}" if spec.defaults else "it takes none"
+        raise ValueError(f"{stat_name} does not take {', '.join(unknown)}; {takes}")
     resolved = {**allowed, **params}
     if spec.local_time:
         resolved["default_tz"] = resolved["default_tz"] or config.default_timezone()
@@ -492,28 +494,28 @@ def double_texting(ds: Dataset, *, min_gap_minutes: float = 20.0) -> dict[str, A
 
 
 @stat("top_words")
-def top_words(ds: Dataset, *, k: int = 20) -> dict[str, Any]:
+def top_words(ds: Dataset, *, top_n: int = 20) -> dict[str, Any]:
     """Most-used words per sender, stopwords removed (English)."""
-    return _top_by_sender(_per_sender_counts(ds, txt.words), k)
+    return _top_by_sender(_per_sender_counts(ds, txt.words), top_n)
 
 
 @stat("top_ngrams")
-def top_ngrams(ds: Dataset, *, k: int = 10, min_count: int = 2) -> dict[str, Any]:
+def top_ngrams(ds: Dataset, *, top_n: int = 10, min_count: int = 2) -> dict[str, Any]:
     """Most-used bigrams and trigrams per sender, skipping ones made only of stopwords."""
     out = {}
     for n, label in ((2, "bigrams"), (3, "trigrams")):
         counts = _per_sender_counts(ds, lambda t, n=n: (" ".join(g) for g in txt.ngrams(t, n)))
-        out[label] = _top_by_sender(counts, k, min_count)
+        out[label] = _top_by_sender(counts, top_n, min_count)
     return out
 
 
 @stat("top_emoji")
-def top_emoji(ds: Dataset, *, k: int = 10) -> dict[str, Any]:
+def top_emoji(ds: Dataset, *, top_n: int = 10) -> dict[str, Any]:
     """Most-used emoji per sender."""
     counts = {s: Counter() for s in SENDERS}
     for m in ds.messages:
         counts[m.sender].update(txt.emoji(m.text))
-    return _top_by_sender(counts, k)
+    return _top_by_sender(counts, top_n)
 
 
 def _phrase_grams(segments: list[list[str]], max_n: int) -> Iterable[tuple[str, ...]]:
@@ -537,7 +539,7 @@ def _contains(longer: tuple[str, ...], shorter: tuple[str, ...]) -> bool:
 def distinctive_phrases(
     ds: Dataset,
     *,
-    k: int = 20,
+    top_n: int = 20,
     max_n: int = 3,
     min_count: int = 3,
     min_ratio: float = 5.0,
@@ -603,7 +605,7 @@ def distinctive_phrases(
         }
         for g in ranked
         if g in keep
-    ][:k]
+    ][:top_n]
     if not phrases:
         flags.append("none_found")
     return {"baseline": mode, "baseline_tokens": base_tokens, "phrases": phrases}, flags
