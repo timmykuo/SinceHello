@@ -1,0 +1,25 @@
+# Common everyday English words, hand-written. Used as the general-English baseline for
+# distinctive phrases when there are no other conversations to compare against.
+# A phrase is only distinctive against this baseline if it has a word not listed here.
+able about above across act actually add after afternoon again age ago agree ahead air all almost alone along already alright always amazing and angry animal another answer any anyone anything anyway anywhere apartment app area arm around arrive art ask asleep assume awake away awesome
+baby back bad bag ball bank bar bath bathroom beach beautiful bed bedroom beer before begin behind believe best better big bike bill birthday bit black blue body book bored boring boss bottle box boy break breakfast bring brother brown build bus busy buy bye
+cake call calm came car card care careful carry case cat catch cause chair chance change charge cheap check chicken child choose church city class clean clear close clothes coffee cold college color come comfortable coming company completely cook cool corner cost couch could couple course crazy cry cup cut cute
+dad dance dark date daughter day dead deal dear decide deep definitely dinner dirty doctor dog done door double dream dress drink drive drop drunk dry
+each early earth easy eat egg else email end enjoy enough even evening event ever every everyone everything exactly exam excited exciting excuse expect expensive eye
+face fact fair fall family far fast father fault favorite feel feeling few fight figure film final finally find fine finish fire first fish fit fix flight floor fly follow food foot forget forgot free friday friend front fruit full fun funny future
+game garden gas gave girl give glad glass god gone good goodnight great green group guess guy guys
+hair half hand hang happen happened happy hard hate head health hear heard heart hell hello help hey hi high hit hold holiday home honestly hope horrible hospital hot hotel hour house huge hungry hurry hurt husband
+idea important inside instead interesting
+job join joke just
+keep kid kind kiss kitchen knew know
+lady land large last late later laugh learn least leave left leg less let letter life light like line list listen little live lol long look looking lose lost lot lots loud love lovely low luck lucky lunch
+mad made mail make man many market matter maybe mean meet meeting message met middle might mind minute miss mom moment monday money month mood morning mother move movie much mum music must
+name near need never new news next nice night nobody noise none normal nothing notice now number
+ocean office oh ok okay old one open order outside party pass past pay people perfect person phone pick picture piece place plan plane play please point police poor possible post pretty probably problem promise pull put
+question quick quiet quite
+rain read ready real reason red remember rest restaurant rich ride right road room run
+sad safe said saturday save saw say school sea second see seem seen sell send sense series seriously set shit shop short show shower sick side sign simple since sister sit sleep slow small smell smile snow someone something sometimes son song soon sorry sound speak special spend start stay still stop store story street strong stuff stupid sunday super sure surprise sweet
+table take talk tea team tell terrible test text thank thanks thing things think thought thursday ticket time tired today together tomorrow tonight took top totally town train travel tree trip true try tuesday turn tv
+ugh understand
+visit wait wake walk wall want war warm watch water way wear weather wednesday week weekend weird well went white whole wife win window wine wish woman wonder word work world worry worse wow write wrong
+yeah year yes yesterday yet young yum

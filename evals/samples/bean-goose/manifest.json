@@ -1,0 +1,293 @@
+{
+  "format_version": 1,
+  "history_id": "bean-goose-s42",
+  "scenario_id": "bean-goose",
+  "seed": 42,
+  "source": "synthetic",
+  "generator": {
+    "kind": "offline",
+    "target_messages": 3000
+  },
+  "description": "Sam and Alex meet at trivia night in New York. Planted: first 'i love you' (Alex), pet name 'bean' from month 4 (Sam), the goose incident, moving day as the busiest day, a fight and makeup, and a 12-week Tokyo long-distance era.",
+  "participants": {
+    "me": {
+      "name": "Sam Rivera",
+      "is_me": true
+    },
+    "them": {
+      "name": "Alex Chen",
+      "handle": "+12125550142"
+    },
+    "jules": {
+      "name": "Jules Okafor",
+      "handle": "+12125550177"
+    },
+    "priya": {
+      "name": "Priya Nair",
+      "handle": "+12125550188"
+    }
+  },
+  "conversations": [
+    {
+      "key": "dm",
+      "source_conv_id": "bean-goose-s42:dm",
+      "is_group": false,
+      "members": [
+        "them"
+      ]
+    },
+    {
+      "key": "group",
+      "source_conv_id": "bean-goose-s42:trivia",
+      "is_group": true,
+      "name": "quiz in my pants",
+      "members": [
+        "them",
+        "jules",
+        "priya"
+      ]
+    }
+  ],
+  "timezones": {
+    "me": [
+      {
+        "start_utc": "2021-02-12T00:00:00Z",
+        "end_utc": null,
+        "tz": "America/New_York"
+      }
+    ],
+    "them": [
+      {
+        "start_utc": "2021-02-12T00:00:00Z",
+        "end_utc": "2022-01-09T05:00:00Z",
+        "tz": "America/New_York"
+      },
+      {
+        "start_utc": "2022-01-09T05:00:00Z",
+        "end_utc": "2022-04-03T08:00:00Z",
+        "tz": "Asia/Tokyo"
+      },
+      {
+        "start_utc": "2022-04-03T08:00:00Z",
+        "end_utc": null,
+        "tz": "America/New_York"
+      }
+    ]
+  },
+  "eras": [
+    {
+      "id": "era_1",
+      "name": "Trivia night strangers",
+      "start_utc": "2021-02-12T05:00:00Z",
+      "end_utc": "2021-04-10T04:00:00Z",
+      "dm_messages": 223
+    },
+    {
+      "id": "era_2",
+      "name": "Falling fast",
+      "start_utc": "2021-04-10T04:00:00Z",
+      "end_utc": "2021-07-01T04:00:00Z",
+      "dm_messages": 670
+    },
+    {
+      "id": "era_3",
+      "name": "Settled in",
+      "start_utc": "2021-07-01T04:00:00Z",
+      "end_utc": "2021-11-01T04:00:00Z",
+      "dm_messages": 743
+    },
+    {
+      "id": "era_4",
+      "name": "Moving in together",
+      "start_utc": "2021-11-01T04:00:00Z",
+      "end_utc": "2022-01-09T05:00:00Z",
+      "dm_messages": 302
+    },
+    {
+      "id": "era_5",
+      "name": "The Tokyo winter",
+      "start_utc": "2022-01-09T05:00:00Z",
+      "end_utc": "2022-04-03T04:00:00Z",
+      "dm_messages": 617
+    },
+    {
+      "id": "era_6",
+      "name": "Back on the same clock",
+      "start_utc": "2022-04-03T04:00:00Z",
+      "end_utc": "2022-05-08T04:00:00Z",
+      "dm_messages": 180
+    }
+  ],
+  "stats": {
+    "lines": 2976,
+    "dm_messages": 2735,
+    "dm_by_sender": {
+      "me": 1163,
+      "them": 1572
+    },
+    "dm_reactions": 121,
+    "group_messages": 120,
+    "attachment_only": 25,
+    "edited": 22,
+    "first_message_id": "bean-goose-s42-000001",
+    "last_message_id": "bean-goose-s42-002976",
+    "range": {
+      "first_utc": "2021-02-13T00:42:00Z",
+      "last_utc": "2022-05-08T00:29:14Z"
+    },
+    "longest_silence": {
+      "hours": 60.0,
+      "after_message_id": "bean-goose-s42-001490",
+      "next_message_id": "bean-goose-s42-001491"
+    },
+    "reply_median_s": {
+      "me": 494.0,
+      "them": 74.0
+    },
+    "late_night_share": {
+      "me": 0.037,
+      "them": 0.0636
+    }
+  },
+  "facts": [
+    {
+      "id": "first_message",
+      "type": "first_message",
+      "message_id": "bean-goose-s42-000001",
+      "sent_at_utc": "2021-02-13T00:42:00Z",
+      "sender": "them",
+      "text": "hey! it's alex from trivia night, the one who knew all the bird facts"
+    },
+    {
+      "id": "first_ily",
+      "type": "first_phrase",
+      "phrase": "i love you",
+      "pattern": "\\b(i love you|love you|ily|love u)\\b",
+      "message_id": "bean-goose-s42-000507",
+      "sent_at_utc": "2021-05-15T03:48:00Z",
+      "sender": "them",
+      "sender_local_time": "2021-05-14T23:48:00",
+      "text": "i love you",
+      "reply_message_id": "bean-goose-s42-000509",
+      "reply_sender": "me",
+      "reply_delay_s": 41,
+      "count_by_sender": {
+        "me": 12,
+        "them": 10
+      },
+      "decoy_message_ids": [
+        "bean-goose-s42-000171"
+      ],
+      "traps": {
+        "earliest_group_match_id": "bean-goose-s42-000215",
+        "reaction_match_ids": [
+          "bean-goose-s42-000508",
+          "bean-goose-s42-001789"
+        ]
+      }
+    },
+    {
+      "id": "pet_bean",
+      "type": "pet_name",
+      "term": "bean",
+      "pattern": "\\bbean\\b",
+      "first_message_id": "bean-goose-s42-000610",
+      "first_at_utc": "2021-05-27T03:20:00Z",
+      "first_sender": "me",
+      "relationship_month": 4,
+      "count_by_sender": {
+        "me": 53,
+        "them": 17
+      }
+    },
+    {
+      "id": "goose_incident",
+      "type": "inside_joke",
+      "phrase": "goose incident",
+      "pattern": "\\bgoose incident\\b",
+      "origin_message_id": "bean-goose-s42-000227",
+      "origin_at_utc": "2021-04-03T20:21:32Z",
+      "origin_sender": "them",
+      "origin_context_ids": [
+        "bean-goose-s42-000224",
+        "bean-goose-s42-000225",
+        "bean-goose-s42-000226",
+        "bean-goose-s42-000227",
+        "bean-goose-s42-000228"
+      ],
+      "count": 32,
+      "count_by_sender": {
+        "me": 9,
+        "them": 23
+      }
+    },
+    {
+      "id": "moving_day",
+      "type": "busiest_day",
+      "date": "2021-11-06",
+      "tz_of": "me",
+      "tz": "America/New_York",
+      "count": 60,
+      "runner_up": {
+        "date": "2021-05-29",
+        "count": 32
+      },
+      "utc_date": "2021-11-06",
+      "utc_count": 60,
+      "reason": "moving day"
+    },
+    {
+      "id": "the_fight",
+      "type": "conflict_makeup",
+      "fight_start_message_id": "bean-goose-s42-001485",
+      "fight_start_at_utc": "2021-09-19T01:05:00Z",
+      "fight_starter": "them",
+      "last_before_silence_id": "bean-goose-s42-001490",
+      "silence_start_utc": "2021-09-19T01:10:35Z",
+      "silence_end_utc": "2021-09-21T13:10:35Z",
+      "silence_hours": 60.0,
+      "apology_message_id": "bean-goose-s42-001491",
+      "apology_sender": "me",
+      "apology_text": "i'm sorry about saturday. i was wrong and i hate not talking to you",
+      "is_longest_silence": true
+    },
+    {
+      "id": "tokyo",
+      "type": "long_distance",
+      "person": "them",
+      "tz": "Asia/Tokyo",
+      "other_tz": "America/New_York",
+      "start_utc": "2022-01-09T05:00:00Z",
+      "end_utc": "2022-04-03T08:00:00Z",
+      "weeks": 12.0,
+      "offset_diff_hours": 14.0,
+      "landed_message_id": "bean-goose-s42-002115",
+      "reunion_message_id": "bean-goose-s42-002777",
+      "dm_messages_during": 617
+    },
+    {
+      "id": "reply_speed",
+      "type": "reply_speed",
+      "faster": "them",
+      "median_reply_s": {
+        "me": 494.0,
+        "them": 74.0
+      },
+      "max_gap_hours": 6.0
+    },
+    {
+      "id": "texts_first",
+      "type": "texts_first",
+      "sender": "them",
+      "gap_hours": 6,
+      "starts": {
+        "me": 164,
+        "them": 277
+      },
+      "share": {
+        "me": 0.3719,
+        "them": 0.6281
+      }
+    }
+  ]
+}

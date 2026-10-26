@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# Never commit message data or local analysis output
+*.db
+*.db-wal
+*.db-shm
+.sincehello/
+imports/
+
+# Generated synthetic histories (the committed sample lives in evals/samples/)
+synthetic/

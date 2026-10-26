@@ -1,0 +1,7 @@
+# Affectionate terms, hand-written. A message counts toward an era's affection share when
+# it contains one of these tokens (or a heart emoji, see eras.py).
+love loved loves loving lovely luv ily ilysm iloveyou
+miss missed missing
+babe baby bae bb boo bub bubs honey hun hon sweetie sweetheart darling cutie dear
+adore adorable cute gorgeous handsome beautiful
+xo xoxo kiss kisses smooch hug hugs cuddle cuddles snuggle
