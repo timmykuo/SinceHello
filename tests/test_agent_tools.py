@@ -62,7 +62,8 @@ def test_tool_definitions_are_strict_and_stable():
         "get_context",
     ]
     assert names[-2:] == ["propose_insight", "finish"]
-    assert "sample_era" not in names and "list_candidates" not in names  # modules absent
+    # The real eras/miners modules are present, so their tools are registered.
+    assert names[6:8] == ["sample_era", "list_candidates"]
 
     def objects(schema):
         if schema.get("type") == "object":
@@ -86,7 +87,7 @@ def test_overview(agent):
     assert out["person"]["name"] == "Alex Chen"
     assert out["stats"]["totals"]["value"]["total"] == 2735
     assert "by_month" not in out["stats"]["totals"]["value"]
-    assert out["eras"] == "not available yet"
+    assert [e["id"] for e in out["eras"]][:2] == ["era_1", "era_2"]
     qid = out["stats"]["who_texts_first"]["query_id"]
     assert ctx.queries[qid]["kind"] == "stat"
     # The first message id went out without its text.
@@ -267,12 +268,20 @@ class FakeEra:
 
 @dataclass
 class FakeCandidate:
-    id: str
+    """Same shape as analysis.miners.Candidate: evidence is store message.id values."""
+
     kind: str
-    message_id: str
+    message_ids: tuple[int, ...]
+    details: dict
 
     def to_dict(self):
-        return {"id": self.id, "kind": self.kind, "message_id": self.message_id, "note": "x" * 900}
+        return {
+            "kind": self.kind,
+            "label": "first x",
+            "message_ids": list(self.message_ids),
+            "score": 1.0,
+            "details": self.details,
+        }
 
 
 def _fake_module(name, **attrs):
@@ -301,7 +310,11 @@ def era_modules(monkeypatch):
 
     def mine(store, person_id, kind=None, *, limit=20):
         calls["mine"] = {"kind": kind, "limit": limit}
-        return [FakeCandidate("cand_1", "first", SID + "000507")]
+        (row_id,) = store.conn.execute(
+            "SELECT id FROM message WHERE source_msg_id = ?",
+            (SID.removeprefix("synthetic:") + "000507",),
+        ).fetchone()
+        return [FakeCandidate("first", (row_id, 10**9), {"message_id": row_id, "note": "x" * 900})]
 
     monkeypatch.setitem(
         sys.modules,
@@ -336,7 +349,11 @@ def test_era_and_candidate_tools(agent, era_modules):
     assert err and "unknown era" in out
     err, out = call2("list_candidates", kind="")
     assert not err and era_modules["mine"] == {"kind": None, "limit": 20}
-    assert out["candidates"][0]["note"].endswith("[truncated]")
+    cand = out["candidates"][0]
+    assert cand["details"]["note"].endswith("[truncated]")
+    # Store row ids come back as agent ids; ids outside the run's scope are dropped.
+    assert cand["message_ids"] == [SID + "000507"]
+    assert cand["details"]["message_id"] == SID + "000507"
     assert any(e["tool"] == "list_candidates" for e in ctx.egress.entries)
     assert era_modules["detect"] == 1  # cached for the run
 

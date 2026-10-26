@@ -226,7 +226,13 @@ def list_candidates(ctx: ToolContext, kind: str = "") -> dict[str, Any]:
     if miners is None:
         raise ToolError("candidate miners are not available yet")
     found = miners.mine(ctx.store, ctx.person_id, kind or None, limit=MAX_CANDIDATES)
-    out = [_truncate(c.to_dict()) for c in found[:MAX_CANDIDATES]]
+    found = found[:MAX_CANDIDATES]
+    # Miners cite store row ids (message.id); the agent cites "source:source_msg_id".
+    store_ids = {i for c in found for i in c.message_ids}
+    for c in found:
+        store_ids |= set(_store_ids_in(c.details))
+    to_agent = _agent_ids(ctx, store_ids)
+    out = [_truncate(_map_ids(c.to_dict(), to_agent)) for c in found]
     # Candidates may carry snippets, so count their ids as shared with text.
     for mid in _ids_in(out, ctx):
         ctx.egress.record(ctx.turn, "list_candidates", mid, with_text=True)
@@ -542,6 +548,45 @@ def _truncate(obj: Any) -> Any:
         return {k: _truncate(v) for k, v in obj.items()}
     if isinstance(obj, list | tuple):
         return [_truncate(v) for v in obj]
+    return obj
+
+
+def _agent_ids(ctx: ToolContext, store_ids: set[int]) -> dict[int, str]:
+    """Map store message.id values to agent ids, keeping only messages in this run's scope."""
+    if not store_ids:
+        return {}
+    marks = ",".join("?" * len(store_ids))
+    rows = ctx.store.conn.execute(
+        f"SELECT id, source, source_msg_id FROM message WHERE id IN ({marks})",
+        sorted(store_ids),
+    )
+    out = {r["id"]: f"{r['source']}:{r['source_msg_id']}" for r in rows}
+    return {k: v for k, v in out.items() if v in ctx.by_id}
+
+
+def _is_id_key(key: str) -> bool:
+    return key.endswith(("message_id", "message_ids"))
+
+
+def _store_ids_in(obj: Any, key: str = "") -> list[int]:
+    if isinstance(obj, dict):
+        return [i for k, v in obj.items() for i in _store_ids_in(v, k)]
+    if isinstance(obj, list | tuple):
+        return [i for v in obj for i in _store_ids_in(v, key)]
+    if isinstance(obj, int) and not isinstance(obj, bool) and _is_id_key(key):
+        return [obj]
+    return []
+
+
+def _map_ids(obj: Any, to_agent: dict[int, str], key: str = "") -> Any:
+    """Replace store ids under message-id keys with agent ids; drop ids outside the scope."""
+    if isinstance(obj, dict):
+        return {k: _map_ids(v, to_agent, k) for k, v in obj.items()}
+    if isinstance(obj, list | tuple):
+        mapped = [_map_ids(v, to_agent, key) for v in obj]
+        return [v for v in mapped if v is not None] if _is_id_key(key) else mapped
+    if isinstance(obj, int) and not isinstance(obj, bool) and _is_id_key(key):
+        return to_agent.get(obj)
     return obj
 
 
