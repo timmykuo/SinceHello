@@ -97,12 +97,20 @@ def test_overview(agent):
 
 def test_get_stats_params_and_errors(agent):
     _, call = agent
-    err, out = call("get_stats", name="who_texts_first", params={"gap_hours": 12})
+    err, out = call(
+        "get_stats", name="who_texts_first", params=[{"name": "gap_hours", "value": 12}]
+    )
     assert not err and out["params"]["gap_hours"] == 12
-    err, out = call("get_stats", name="totals", params={"start": "2022-01-01"})
+    # Every value arrives as a JSON number; integer parameters get an int back.
+    top = [{"name": "top_n", "value": 3.0}]
+    err, out = call("get_stats", name="busiest_day", params=top)
+    assert not err and out["params"]["top_n"] == 3 and isinstance(out["params"]["top_n"], int)
+    err, out = call("get_stats", name="totals", start="2022-01-01")
     assert not err and out["value"]["total"] < 2735 and out["params"]["start_utc"]
-    err, out = call("get_stats", name="totals", params={"gap_hours": 3})
+    err, out = call("get_stats", name="totals", params=[{"name": "gap_hours", "value": 3}])
     assert err and "does not take gap_hours" in out
+    err, out = call("get_stats", name="busiest_day", params=[{**top[0], "value": 1.5}])
+    assert err and "must be an integer" in out
 
 
 def test_search_keyword_regex_and_caps(agent):
