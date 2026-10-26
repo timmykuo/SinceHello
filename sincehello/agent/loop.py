@@ -36,6 +36,7 @@ from sincehello.agent.budget import Budget, task_budget_tokens
 from sincehello.agent.context import ToolContext
 from sincehello.agent.runlog import RunRecorder, as_dict
 from sincehello.agent.tools import Critic, build_tools, dispatch
+from sincehello.curate import CurationConfig
 from sincehello.report.schema import Report
 from sincehello.store import Store
 
@@ -56,6 +57,7 @@ class AgentConfig:
     fallbacks: bool = True
     task_budget: bool = True
     default_tz: str | None = None
+    deck: CurationConfig = field(default_factory=CurationConfig)  # SPEC.md §7.7
 
 
 @dataclass
@@ -271,6 +273,7 @@ def run_agent(
             turns=turn,
             critic_calls=budget.critic_calls,
             critic_cost=budget.critic_spent,
+            curation=config.deck,
         )
         rec.close()
     return RunResult(status, turn, budget.spent, report, run_dir, notes)

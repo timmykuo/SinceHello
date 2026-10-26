@@ -128,10 +128,11 @@ def test_full_run_with_parallel_calls_and_a_corrected_insight(bean_goose, tmp_pa
     # Run output.
     out = result.run_dir
     report = json.loads((out / "report.json").read_text())
-    assert report["run"]["status"] == "finished" and sorted(report["deck"]) == [
-        "ins_001",
-        "ins_002",
-    ]
+    assert report["run"]["status"] == "finished"
+    # Curation ordered the deck: the milestone opens, language follows (SPEC.md §7.7).
+    categories = {i["id"]: i["category"] for i in report["insights"]}
+    assert [categories[i] for i in report["deck"]] == ["milestone", "language"]
+    assert report["curation"]["dropped"] == {}
     assert report["insights"][0]["verification"]["deterministic"] == "pass"
     assert result.cost_usd > 0
     assert report["run"]["cost_usd"] == pytest.approx(result.cost_usd, abs=1e-6)

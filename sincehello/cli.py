@@ -257,6 +257,20 @@ def _critic(enabled: bool, client, model: str, effort: str):
     return LLMCritic(client, CriticConfig(model=model, effort=effort))
 
 
+DeckSize = Annotated[
+    int, typer.Option(help="Most cards in the deck (SPEC.md §7.7); at least 12 when available.")
+]
+
+
+def _deck_config(size: int):
+    from sincehello.curate import CurationConfig
+
+    if size < 1:
+        typer.echo("--deck-size must be at least 1", err=True)
+        raise typer.Exit(1)
+    return CurationConfig(min_cards=min(12, size), max_cards=size)
+
+
 def _print_run(result) -> None:
     run = result.report.run
     typer.echo(
@@ -269,6 +283,7 @@ def _print_run(result) -> None:
             verdicts[ins.verification.critic] = verdicts.get(ins.verification.critic, 0) + 1
         shown = ", ".join(f"{n} {v}" for v, n in sorted(verdicts.items())) or "none"
         typer.echo(f"critic: {run.critic_calls} calls, ${run.critic_cost_usd:.4f}; kept {shown}")
+    _print_deck(result.report)
     for note in result.notes:
         typer.echo(f"note: {note}", err=True)
     typer.echo(f"run output: {result.run_dir}")
@@ -285,6 +300,7 @@ def analyze(
     critic: CriticFlag = True,
     critic_model: CriticModel = "claude-opus-5-5",
     critic_effort: CriticEffort = "medium",
+    deck_size: DeckSize = 20,
 ) -> None:
     """Run the discovery agent (Claude) on one person. Writes ~/.sincehello/runs/<run_id>/."""
     from sincehello.agent import AgentConfig, run_agent
@@ -293,7 +309,12 @@ def analyze(
     _check_effort(effort)
     _check_effort(critic_effort)
     config_ = AgentConfig(
-        model=model, effort=effort, max_cost=max_cost, max_turns=max_turns, default_tz=tz
+        model=model,
+        effort=effort,
+        max_cost=max_cost,
+        max_turns=max_turns,
+        default_tz=tz,
+        deck=_deck_config(deck_size),
     )
     with Store(config.store_path()) as store:
         if person_id not in {p.person_id for p in store.people()}:
@@ -418,3 +439,31 @@ def eval_critic(
         f" pass-vs-flag {out['pass_vs_flag']}); {out['calls']} calls, ${out['cost_usd']:.4f}"
     )
     typer.echo(f"results: {path}")
+
+
+def _print_deck(report) -> None:
+    by_id = {i.id: i for i in report.insights}
+    cur = report.curation
+    label = "" if cur is None or cur.verified else " (unverified: no critic ran)"
+    typer.echo(f"deck: {len(report.deck)} cards{label}")
+    for n, iid in enumerate(report.deck, 1):
+        ins = by_id[iid]
+        typer.echo(f"  {n:>2}. {iid} {ins.category:<9} {ins.title}")
+
+
+@app.command()
+def curate(
+    run_dir: Annotated[Path, typer.Argument(help="A run directory with a report.json.")],
+    deck_size: DeckSize = 20,
+) -> None:
+    """Re-curate an existing run's report.json in place (SPEC.md §7.7). No LLM calls."""
+    from sincehello.curate import curate as curate_report
+    from sincehello.report.schema import Report
+
+    path = run_dir / "report.json"
+    if not path.is_file():
+        typer.echo(f"no report.json in {run_dir}", err=True)
+        raise typer.Exit(1)
+    report = curate_report(Report.model_validate_json(path.read_text()), _deck_config(deck_size))
+    path.write_text(report.model_dump_json(indent=2))
+    _print_deck(report)

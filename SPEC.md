@@ -620,6 +620,44 @@ Implementation notes (`sincehello/verify/critic.py`, M5):
   → eras story → closer.
 - The target deck size is 12–20 cards (configurable).
 
+Implementation notes (`sincehello/curate/rank.py`, M6):
+
+- **Where it runs:** `RunRecorder.write_outputs` curates every report before writing
+  `report.json`, errors and budget stops included. `sincehello curate <run_dir>
+  [--deck-size N]` re-curates an existing run in place. It reads only `report.json`, so it
+  is deterministic and offline: no LLM, no store, no wall clock. `CurationConfig` holds
+  `min_cards` (12), `max_cards` (20), `min_score` (0.2), `spread` (0.75) and
+  `category_cap` (0.4). `--deck-size N` (on `analyze` too) sets `max_cards = N` and
+  `min_cards = min(12, N)`.
+- **Eligible:** deterministic `pass` and critic `pass`. Critic `pending` with no
+  `critic_notes` means no critic ever saw it (`--no-critic`): those go in, and
+  `curation.verified` is false. `pending` with notes means the critic ran but couldn't
+  give a verdict (§7.6): it stays out. The deck is never padded with unverified cards
+  in a critic run.
+- **Score:** `delight/5 × specificity/5 × accuracy/5`. Confidence is the critic's accuracy
+  score. A missing score counts as 3, the rubric midpoint, so a run without a critic
+  scores every card 0.216 and breaks ties by insight id.
+- **Dedupe:** walk the insights best score first. A card is dropped as a duplicate of an
+  already-kept one if it tells the same storyline: the same `first.pattern` (case and
+  whitespace ignored), the same metric `query_id` and `path`, or a story card for the same
+  `era_id`. Within one category it is also a duplicate if at least half of the smaller
+  evidence set is shared, or if title-plus-headline content words have Jaccard ≥ 0.5.
+- **Selection:** the milestone whose earliest cited message is the first message of the
+  history ("since hello") is picked first when eligible. After that, pick greedily by
+  `score × spread^(cards already picked from that category)`. No category may fill more
+  than `ceil(category_cap × max_cards)` cards (at least 2). The cap relaxes only while the
+  deck is under `min_cards`. Past `min_cards`, cards under `min_score` stop the deck
+  (3×3×3 = 0.216 clears it, so bland-but-fine cards fill out a short deck). Never more
+  than `max_cards`. If fewer cards are eligible than `min_cards`, the deck is all of them.
+- **Order:** opener (the earliest-dated milestone, which is "since hello" when it is in)
+  → rhythm/stats → language → free discoveries → the other milestones by date → story
+  cards in era order (`report.eras`; unknown eras last) → closer (the best free
+  discovery). Rhythm, language and free are each sorted best first. Dates come from
+  `Insight.at_utc`, the earliest cited message's time, set when the report is written.
+- **Record:** `report.curation` has `verified`, the sizes used, every eligible
+  insight's score, and `dropped` (insight id → reason: critic verdict, duplicate of …,
+  score under the floor, category full, deck full).
+
 ---
 
 ## 8. Insight catalog (seed goals; the agent can find others)
@@ -651,7 +689,8 @@ Implementation notes (`sincehello/verify/critic.py`, M5):
 ```
 
 Top-level `report.json` fields: `person`, `range`, `sources`, `deck[]` (ordered insight
-ids), `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text), and
+ids, filled by curation, §7.7), `curation{verified, min_cards, max_cards, scores{},
+dropped{}}`, `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text), and
 `run{run_id, status, cost_usd, tokens, turns, messages_shared, pct_shared, model, effort,
 version, critic_calls, critic_cost_usd}` (critic spend is included in `cost_usd`). Pydantic models live in `sincehello/report/schema.py`.
 
@@ -660,7 +699,8 @@ dotted path into the query's value (`"share.them"`, `"top.0.date"`) and `metric.
 is the value there; `first: {pattern, sender}` is required for `kind:
 "first_occurrence"` and dropped on other kinds. `count` and `first_occurrence` return their own query ids
 (`q_count_…`, `q_first_…`), recomputable within a run. Stats, counts and `rhythm`
-insights must carry a metric.
+insights must carry a metric. The pipeline also sets `at_utc`, the earliest cited message's time (ISO UTC),
+so curation can date milestones from `report.json` alone.
 
 ---
 
@@ -758,9 +798,10 @@ sincehello people                  # list people, by message count
 sincehello stats <person> [--json] # local stats only (§7.1), no LLM
 sincehello merge <person> <handle> # manual identity merge (person id or one of their handles)
 sincehello me <handle>             # mark a handle as your own
-sincehello analyze <person> [--max-cost 5] [--deck-size 15]
+sincehello analyze <person> [--max-cost 5] [--deck-size 20]
                                    # the "one click": sync all connected sources → analyze
-                                   # (M4: --model, --effort, --max-turns; no sync or deck yet)
+                                   # (--model, --effort, --max-turns; no sync yet)
+sincehello curate <run-dir> [--deck-size 20]  # re-curate a run's report.json (§7.7)
 sincehello report <run-id>         # print report.md
 sincehello rate <run-id>           # human rating pass
 sincehello eval [--suite synthetic]
@@ -804,7 +845,7 @@ sincehello/
   analysis/        stats.py, eras.py, miners.py
   agent/           loop.py, tools.py, prompts/, budget.py
   verify/          checks.py, critic.py
-  curate/          rank.py
+  curate/          rank.py (dedupe, score, spread, order; §7.7)
   report/          schema.py (pydantic), render_md.py
   cli.py
 evals/
@@ -833,6 +874,8 @@ is pure Python; see §7.2 for why not `ruptures`).
 4. **M4 — Discovery agent (LOOP 1):** tools, manual loop, budget guard, egress log.
 5. **M5 — Verification (LOOP 2):** deterministic checks plus critic, and the revise loop.
 6. **M6 — Curation plus final report;** human rater; LLM judge calibrated against my ratings.
+   Curation is done (§7.7): dedupe, score, category spread and Wrapped ordering fill
+   `report.json` `deck` on every run; `sincehello curate` re-curates a run.
 7. **M7 — Timezone inference:** sleep-window shift detection, agent naming, confirm
    flow, cross-timezone insights. Synthetic scenarios get a planted long-distance era.
 8. **M8 — Iterate:** tune prompts, effort, and tools against the evals.

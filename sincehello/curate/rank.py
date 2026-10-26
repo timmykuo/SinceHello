@@ -140,10 +140,10 @@ def _select(
     for ins in pool:
         if len(picked) >= config.max_cards:
             dropped[ins.id] = "deck full"
-        elif counts[ins.category] >= cap:
-            dropped[ins.id] = f"category {ins.category} full"
-        else:
+        elif scores[ins.id] < config.min_score:
             dropped[ins.id] = f"score {scores[ins.id]} under {config.min_score}"
+        else:
+            dropped[ins.id] = f"category {ins.category} full"
     return picked
 
 
