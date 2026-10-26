@@ -19,7 +19,8 @@ Everything else in this file is a guard around that loop:
   another model. If the whole chain declines, we drop the partial output, note it, and
   carry on with other categories.
 - Budget: a hard dollar cap computed from `usage` (budget.py), checked before every
-  request, plus an advisory `task_budget` so the model paces itself.
+  request, plus an advisory `task_budget` so the model paces itself. Critic calls made
+  inside `propose_insight` spend from the same cap (verify/critic.py).
 """
 
 from __future__ import annotations
@@ -125,12 +126,14 @@ def run_agent(
     critic: Critic | None = None,
 ) -> RunResult:
     ctx = ToolContext(store, person_id, config.default_tz)
-    ctx.critic = critic
     tools = build_tools()
     tools_by_name = {t.name: t for t in tools}
     request = build_request(config, [t.definition() for t in tools])
     budget = Budget(config.max_cost)
     rec = RunRecorder(run_dir)
+    # The critic (SPEC.md §7.6) runs inside propose_insight, in its own context, but
+    # spends from this run's budget and writes `critic_*` events to this run's log.
+    ctx.critic, ctx.budget, ctx.log = critic, budget, rec.event
     rec.event("request_static", request=request, person_id=person_id)
 
     kickoff = prompts.load("kickoff").format(name=ctx.person_name or "them", person_id=person_id)
@@ -249,7 +252,15 @@ def run_agent(
     finally:
         # Runs on every exit, errors included: keep what was found so far.
         rec.event("request", turn=None, new_messages=messages[logged:])
-        rec.event("end", status=status, turns=turn, cost_usd=budget.spent, notes=notes)
+        rec.event(
+            "end",
+            status=status,
+            turns=turn,
+            cost_usd=budget.spent,
+            critic_calls=budget.critic_calls,
+            critic_cost_usd=budget.critic_spent,
+            notes=notes,
+        )
         report = rec.write_outputs(
             ctx,
             status=status,
@@ -258,6 +269,8 @@ def run_agent(
             cost=budget.spent,
             tokens=budget.tokens,
             turns=turn,
+            critic_calls=budget.critic_calls,
+            critic_cost=budget.critic_spent,
         )
         rec.close()
     return RunResult(status, turn, budget.spent, report, run_dir, notes)

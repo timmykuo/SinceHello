@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -117,6 +118,22 @@ class EgressLog:
         }
 
 
+@dataclass
+class Draft:
+    """One insight going through the critic's revise loop (SPEC.md §7.6).
+
+    The agent resubmits a revised insight with `revises=<id>`. `revisions` counts the
+    resubmissions the critic has seen; `notes` are its latest issues.
+    """
+
+    id: str
+    kind: str
+    cited: set[str]
+    revisions: int = 0
+    status: str = "open"  # open | accepted | rejected | unverified
+    notes: list[str] = field(default_factory=list)
+
+
 class ToolContext:
     """One person's messages plus the bookkeeping the tools need."""
 
@@ -140,8 +157,13 @@ class ToolContext:
         self.rejected_proposals = 0
         self.finished = False
         self.summary: str | None = None
-        # M5 hook: a `tools.Critic` run on insights that pass the deterministic checks.
+        # M5: a `tools.Critic` run on insights that pass the deterministic checks, and
+        # its revise loop (draft id -> Draft). The loop sets `budget` and `log` so the
+        # critic charges the run budget and writes the run log.
         self.critic: Any = None
+        self.drafts: dict[str, Draft] = {}
+        self.budget: Any = None  # agent.budget.Budget
+        self.log: Callable[..., None] | None = None  # RunRecorder.event
         self.eras: Any = ...  # detect_eras() result, loaded on first use (tools._eras)
 
         self.messages: list[Message] = [
@@ -179,6 +201,13 @@ class ToolContext:
         if row["is_group"]:
             raise ToolError(f"{message_id} is in a group chat; only 1:1 messages count")
         raise ToolError(f"{message_id} is not in your 1:1 conversation with this person")
+
+    def around(self, message_id: str, before: int, after: int) -> list[Message]:
+        """A message and its neighbours in the same conversation, oldest first."""
+        target = self.get(message_id)
+        convo = [m for m in self.messages if m.conversation_id == target.conversation_id]
+        i = convo.index(target)
+        return convo[max(0, i - before) : i + after + 1]
 
     def window(self, start_utc: int | None, end_utc: int | None) -> list[Message]:
         lo = 0 if start_utc is None else bisect_left(self._times, start_utc)

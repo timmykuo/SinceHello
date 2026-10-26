@@ -53,7 +53,7 @@ def check(ctx: ToolContext, draft: InsightDraft, era_ids: set[str] | None = None
     if draft.metric is not None:
         try:
             value = ctx.recompute(draft.metric.query_id)
-            actual = _at_path(value, draft.metric.path)
+            actual = at_path(value, draft.metric.path)
         except ToolError as e:
             failures.append(f"metric: {e}")
         else:
@@ -76,7 +76,7 @@ def _norm(s: str) -> str:
     return " ".join(s.split())
 
 
-def _at_path(value: Any, path: str) -> Any:
+def at_path(value: Any, path: str) -> Any:
     cur = value
     for part in [p for p in path.split(".") if p]:
         if isinstance(cur, dict) and part in cur:

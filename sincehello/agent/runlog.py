@@ -5,6 +5,10 @@
   messages appended since the previous request, so the full request of any turn is
   `static` + every `new_messages` so far. `response` events carry the whole response,
   usage, and cost (turn and cumulative). `tool` events record each call and outcome.
+  Critic calls (SPEC.md §7.6) are separate requests with their own `critic_*` events:
+  `critic_request_static` once, then per call `critic_request` (the one user message),
+  `critic_response` (with cost and the run total), and `critic_verdict`, or
+  `critic_malformed` / `critic_refusal` / `critic_api_error` / `critic_skipped`.
 - `report.json`: the draft report (insights unranked; curation is M6).
 - `egress.json`: which message ids went to Claude, and what share of the history.
 """
@@ -69,6 +73,8 @@ class RunRecorder:
         cost: float,
         tokens: dict[str, int],
         turns: int,
+        critic_calls: int = 0,
+        critic_cost: float = 0.0,
     ) -> Report:
         egress = ctx.egress.summary(len(ctx.messages))
         (self.dir / "egress.json").write_text(
@@ -103,6 +109,8 @@ class RunRecorder:
                 model=model,
                 effort=effort,
                 version=__version__,
+                critic_calls=critic_calls,
+                critic_cost_usd=round(critic_cost, 6),
             ),
         )
         (self.dir / "report.json").write_text(report.model_dump_json(indent=2))
