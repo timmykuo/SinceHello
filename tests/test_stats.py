@@ -167,7 +167,7 @@ def test_message_length_and_double_texting(basic):
 
 
 def test_top_words(basic):
-    v = value(*basic, "top_words", k=4)
+    v = value(*basic, "top_words", top_n=4)
     assert v["them"] == [["pickle", 3], ["time", 3], ["forever", 1], ["friend", 1]]
     assert v["me"] == [["hello", 1], ["hi", 1], ["morning", 1], ["pickle", 1]]
     assert v["both"][:2] == [["pickle", 4], ["time", 4]]
@@ -381,8 +381,10 @@ def test_window_params_limit_messages(basic):
 
 
 def test_bad_params_rejected():
-    with pytest.raises(ValueError, match="does not take"):
+    with pytest.raises(ValueError, match="does not take gap_hours; it takes none"):
         resolve_params("totals", {"gap_hours": 3})
+    with pytest.raises(ValueError, match="does not take k; it takes: top_n$"):
+        resolve_params("top_emoji", {"k": 3})
     with pytest.raises(ValueError, match="unknown stat"):
         resolve_params("nope")
 

@@ -308,6 +308,10 @@ Implementation notes (`sincehello/analysis/`, M2):
   definition changes.
 - Every stat takes optional `start_utc` / `end_utc` (ms) windows, so era-level stats
   (e.g. reply time by era) reuse the same code once §7.2 exists.
+- Parameter names are shared across stats where they mean the same thing: every
+  "how many to return" parameter is `top_n` (`busiest_day`, `top_words`, `top_ngrams`,
+  `top_emoji`, `distinctive_phrases`). An unknown parameter is an error that lists the
+  ones the stat does take.
 - Definitions, where the bullets above leave room:
   - Calendar-day stats (per year/month, busiest day, streak) count each message on its
     **sender's** local date, like time-of-day stats.
@@ -444,9 +448,9 @@ Implementation notes (`sincehello/analysis/miners.py`, M2):
 
 | Tool | Returns | Notes |
 |---|---|---|
-| `get_overview()` | Person names, date range, totals, era list, top-level stats | Called first; a cheap orientation |
-| `get_stats(name, start?, end?, params?)` | One stat block from §7.1; `params` is a list of `{name, value}` pairs (strict schemas allow only 24 optional parameters across all tools) | Numbers only, no message text |
-| `search_messages(query, mode, sender?, start?, end?, limit≤25)` | Matching messages (id, ts, sender, text) | `mode`: keyword (FTS5) or regex |
+| `get_overview()` | Person names, date range, totals, era list, top-level stats, and each stat's summary, parameters and defaults | Called first; a cheap orientation |
+| `get_stats(name, start?, end?, params?)` | One stat block from §7.1; `params` is a list of `{name, value}` pairs (strict schemas allow only 24 optional parameters across all tools, so the name enum is every stat's parameters; a wrong one gets an error naming the right ones) | Numbers only, no message text |
+| `search_messages(query, mode, sender?, start?, end?, order?, limit≤25)` | Matching messages (id, ts, sender, text) | `mode`: keyword (FTS5) or regex. An empty `query` matches everything, so with `start`/`end` it reads a time window in order |
 | `first_occurrence(pattern, sender?)` | Earliest match plus its id | The deterministic answer to "first time…" |
 | `count(pattern, sender?, group_by?)` | Counts by sender, year, or era | For "you said X 412 times" |
 | `get_context(message_id, before≤15, after≤15)` | Surrounding messages | For reading a moment |

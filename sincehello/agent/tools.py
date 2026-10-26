@@ -111,7 +111,10 @@ def get_overview(ctx: ToolContext) -> dict[str, Any]:
         },
         "default_tz": ctx.default_tz,
         "stats": stats,
-        "available_stats": {s.name: s.summary for s in STATS.values()},
+        # Each stat's own parameters with defaults, so get_stats.params aren't guessed.
+        "available_stats": {
+            s.name: {"summary": s.summary, "params": s.defaults} for s in STATS.values()
+        },
     }
     eras = _eras(ctx)
     out["eras"] = [e.to_dict() for e in eras] if eras is not None else "not available yet"
@@ -133,7 +136,9 @@ def get_stats(
     kwargs: dict[str, Any] = {}
     for p in params or []:
         key, value = p["name"], p["value"]
-        if not isinstance(defaults.get(key), float):  # the schema types every value "number"
+        # The schema types every value "number". Unknown names fall through to compute,
+        # whose error lists what the stat does take.
+        if key in defaults and not isinstance(defaults[key], float):
             if value != int(value):
                 raise ToolError(f"{key} must be an integer, got {value}")
             value = int(value)
@@ -166,7 +171,9 @@ def search_messages(
     pool = ctx.window(parse_when(start), parse_when(end))
     if sender != "any":
         pool = [m for m in pool if m.sender == sender]
-    if mode == "regex":
+    if not query:  # browse: every message in the window, in time order
+        hits = pool
+    elif mode == "regex":
         rx = compile_pattern(query)
         hits = [m for m in pool if rx.search(m.text)]
     elif mode == "keyword":
@@ -494,7 +501,7 @@ def build_tools() -> list[Tool]:
             "One stat block from the local stats engine (numbers only, no message text)."
             " Returns a query_id to cite in an insight's metric. Optional: a start/end"
             " window, and params as [{name, value}] pairs for the stat's own parameters"
-            " (see get_overview.available_stats).",
+            " (get_overview.available_stats lists each stat's parameters and defaults).",
             _obj(
                 {
                     "name": {"type": "string", "enum": sorted(STATS)},
@@ -511,7 +518,9 @@ def build_tools() -> list[Tool]:
             f"Find messages. mode='keyword' uses SQLite FTS5 syntax (quote phrases:"
             f" \"goose incident\"); mode='regex' is a case-insensitive Python regex. Returns"
             f" at most {MAX_SEARCH} messages (id, sender, UTC and sender-local time, text"
-            f" truncated to {MAX_TEXT} chars) plus the total match count.",
+            f" truncated to {MAX_TEXT} chars) plus the total match count. An empty query"
+            " matches every message: with start/end, it reads a time window in order"
+            " (page through it with start or order='newest').",
             _obj(
                 {
                     "query": {"type": "string"},
