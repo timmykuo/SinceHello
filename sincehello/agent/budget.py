@@ -3,6 +3,10 @@
 Cost comes from each response's `usage`, priced per model with cache reads and writes
 billed at their own rates. When a server-side fallback ran, `usage.iterations` lists
 every attempt with its own model, and is the billing source of truth.
+
+Agent turns and critic calls (SPEC.md §7.6) spend from the same cap but are tracked
+apart: only agent turns feed the next-turn projection, and each critic call is guarded
+by its own estimate (`can_afford_critic`).
 """
 
 from __future__ import annotations
@@ -35,6 +39,9 @@ PRICES: dict[str, Price] = {
 FALLBACK_PRICE = max(PRICES.values(), key=lambda p: p.output)
 
 WRAP_UP_AT = 0.8  # share of the budget that triggers the wrap-up message
+# What we assume the first critic call costs before any has been priced: ~1.5k cached
+# system tokens, ~3k fresh input, ~2k output (thinking included) on Opus 5.5.
+CRITIC_PRIOR = 0.06
 
 
 def _get(obj: Any, name: str) -> Any:
@@ -87,15 +94,24 @@ def response_cost(response: Any) -> tuple[float, dict[str, int]]:
 class Budget:
     max_cost: float
     spent: float = 0.0
-    turns: int = 0
+    turns: int = 0  # agent turns only
     last_turn: float = 0.0
-    tokens: dict[str, int] = field(default_factory=dict)
+    tokens: dict[str, int] = field(default_factory=dict)  # agent and critic together
+    critic_calls: int = 0
+    critic_spent: float = 0.0
+    critic_last: float = 0.0
 
-    def add(self, response: Any) -> float:
+    def add(self, response: Any, kind: str = "agent") -> float:
+        """Charge one response to the run. `kind` is "agent" or "critic"."""
         cost, tokens = response_cost(response)
         self.spent += cost
-        self.turns += 1
-        self.last_turn = cost
+        if kind == "critic":
+            self.critic_calls += 1
+            self.critic_spent += cost
+            self.critic_last = cost
+        else:
+            self.turns += 1
+            self.last_turn = cost
         for k, v in tokens.items():
             self.tokens[k] = self.tokens.get(k, 0) + v
         return cost
@@ -109,6 +125,14 @@ class Budget:
 
     def can_afford_next(self) -> bool:
         return self.spent + self.projected_next() <= self.max_cost
+
+    def projected_critic(self) -> float:
+        if not self.critic_calls:
+            return CRITIC_PRIOR
+        return max(self.critic_last, self.critic_spent / self.critic_calls)
+
+    def can_afford_critic(self) -> bool:
+        return self.spent + self.projected_critic() <= self.max_cost
 
     @property
     def should_wrap_up(self) -> bool:
