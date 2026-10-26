@@ -107,4 +107,5 @@ def write_batch(
         report.conversations += 1
     seen, added = store.add_messages(messages)
     report.messages_seen, report.messages_added = seen, added
+    store.resolve_identities()
     return report

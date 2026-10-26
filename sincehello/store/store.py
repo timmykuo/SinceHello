@@ -196,6 +196,12 @@ class Store:
             )
         return cur.rowcount > 0
 
+    def resolve_identities(self) -> int:
+        """Run the automatic merges (SPEC.md §6). Returns how many handles moved."""
+        from sincehello.store.identity import auto_merge
+
+        return auto_merge(self)
+
     def get_cursor(self, source: str) -> str | None:
         row = self.conn.execute("SELECT cursor FROM sync_state WHERE source = ?", (source,))
         found = row.fetchone()
@@ -246,19 +252,30 @@ class Store:
         ).fetchall()
 
     def people(self) -> list[PersonSummary]:
-        """Everyone except me, by message count in 1:1 conversations (SPEC.md §1)."""
+        """Everyone except me, by message count in 1:1 conversations (SPEC.md §1).
+
+        A person's count covers every 1:1 conversation with any of their handles.
+        """
         rows = self.conn.execute(
             """
+            WITH conv_count AS (
+                SELECT m.conversation_id, count(*) AS n FROM message m
+                  JOIN conversation c ON c.id = m.conversation_id AND c.is_group = 0
+                 WHERE m.is_reaction = 0
+                 GROUP BY m.conversation_id
+            ), person_conv AS (
+                SELECT DISTINCT h.person_id, cm.conversation_id FROM conversation_member cm
+                  JOIN handle h ON h.id = cm.handle_id
+            )
             SELECT p.id, p.display_name,
                    (SELECT group_concat(raw_value, ', ') FROM handle WHERE person_id = p.id)
                        AS handles,
-                   (SELECT count(*) FROM message m
-                      JOIN conversation c ON c.id = m.conversation_id AND c.is_group = 0
-                      JOIN conversation_member cm ON cm.conversation_id = c.id
-                      JOIN handle h ON h.id = cm.handle_id AND h.person_id = p.id
-                     WHERE m.is_reaction = 0) AS message_count
+                   coalesce(sum(cc.n), 0) AS message_count
               FROM person p
+              LEFT JOIN person_conv pc ON pc.person_id = p.id
+              LEFT JOIN conv_count cc ON cc.conversation_id = pc.conversation_id
              WHERE p.is_me = 0
+             GROUP BY p.id
              ORDER BY message_count DESC, p.id
             """
         ).fetchall()

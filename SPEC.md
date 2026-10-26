@@ -226,7 +226,15 @@ The goal: **one Person = every handle, on every app, that belongs to the same hu
 - Cross-app merges are manual in v1. The user confirms "this IG username is the same
   person as this phone number". There's no fuzzy auto-merge in v1, because merging the
   wrong person would wreck the report.
-- The user's own handles are marked as `is_me`.
+- The user's own handles are marked as `is_me` (`sincehello me <handle>` moves a handle to
+  the `is_me` person, so it drops out of `sincehello people`).
+- Phone normalization is a small built-in normalizer (`store/identity.py`), not
+  libphonenumber: `+<country><number>` keeps its digits, and a bare 10-digit number (or 11
+  digits starting with 1) is read as US/NANP (`+1`). Other bare numbers and short codes are
+  never auto-merged.
+- Automatic merges run after every ingest (`write_batch`). A manual merge moves a handle
+  along with any handles that share its E.164 number, and deletes the person it leaves empty.
+  A person's message count covers every 1:1 conversation with any of their handles.
 
 ### 6.1 Timezone timeline (per person)
 
@@ -397,11 +405,18 @@ Implementation notes (`sincehello/analysis/miners.py`, M2):
   Scores share a rough 0–1 scale so a mixed list ranks sensibly.
 - Firsts: one candidate per family with any match, `message_ids[0]` is the earliest
   match, followed by the other person's reply (if within 6h) and the other person's own
-  first match. Families and patterns (case-insensitive `re.search`, curly apostrophes
-  straightened): i love you `\b(i love you|love you|ily|ilysm|love u|luv you|luv u|love ya)\b`
-  (score 1.0), miss you (0.85), babe/baby/bae/honey/sweetheart/sweetie/darling (0.8),
-  goodnight/gn/nighty night (0.7), happy birthday/bday/hbd (0.7). Details carry the
-  sender's local time, reply delay, and counts per sender.
+  first match. Each family is a list of phrases matched fuzzily (`miners.fuzzy_phrase`):
+  every letter may repeat ("i loooove youuu", "ilyyy", "gnnn"), spaces may be any
+  whitespace run, and apostrophes are optional, with word boundaries on both ends so
+  near-misses like "love your", "lovely" or "i missed your call" don't count. Matching is
+  case-insensitive `re.search` with curly apostrophes straightened; the compiled pattern is
+  in `details.pattern` so a verifier can re-run it. Families: i love you (love you/u/ya,
+  luv, lov, ily, ilysm, ilu, "in love with you", "i ❤️ you" / "i <3 u"; score 1.0), miss
+  you (0.85), babe/baby/bae/honey/sweetheart/sweetie/darling (0.8), goodnight (good
+  night/nite, gnight, gn, night night, nighty night; 0.7), happy birthday (bday, b-day,
+  birfday, hbd; 0.7). Intensifiers need no rule: "i love you sooo much" and "i really love
+  you" contain "love you". Details carry the matched text, the sender's local time, reply
+  delay, and counts per sender.
 - Pet names: tokens used in ≥ 5 messages, alphabetic, 2–12 letters, ≥ 50% of uses as a
   message's first or last word, a per-message rate ≥ 2x higher for one person, not a
   name of anyone in the store, not in `common_english.txt` or the chat-slang list
@@ -501,8 +516,8 @@ Implementation notes (`sincehello/agent/`, M4):
 - Run output: `~/.sincehello/runs/<run_id>/run_log.jsonl` (static request once, then
   each request's new messages, each full response with usage and cost, each tool
   call), `report.json` (§8.1, `deck` empty until curation), `egress.json`.
-- `propose_insight` runs the §7.6 step 1 checks in `verify/checks.py`; the M5 critic
-  plugs in as `ToolContext.critic` (`tools.Critic`).
+- `propose_insight` runs the §7.6 step 1 checks in `verify/checks.py`, then the M5
+  critic (`ToolContext.critic`, a `tools.Critic`; the real one is `verify/critic.py`).
 
 ### 7.6 LOOP 2 — verification
 
@@ -522,6 +537,71 @@ Each proposed insight passes through:
      in a forwarded message, inside jokes misattributed.
    - `revise` goes back to the agent with the critic's notes, at most 2 revisions per insight.
 3. Only `pass` insights move on to curation.
+
+Implementation notes (`sincehello/verify/critic.py`, M5):
+
+- **Hook:** `LLMCritic` is the `tools.Critic` the M4 hook expected, `(insight, ctx) ->
+  Verdict`, unchanged. It is on by default in `analyze` and `eval agent`
+  (`--no-critic`, `--critic-model`, `--critic-effort`). Three additions around it:
+  `ToolContext` carries the run's `budget` and `log` (set by `run_agent`) so the critic
+  can charge and record itself; a critic that can't give a verdict raises
+  `CriticUnavailable`; and `propose_insight` takes an optional `revises` draft id.
+- **Own context:** each call is a fresh one-message request. It never sees the agent's
+  conversation, only: the people (`me`/`them` names), the card (title, headline, body,
+  evidence, `first`, era), the metric with its query arguments and the value recomputed
+  by code, every cited message with 5 messages each side (overlapping windows merged,
+  cited ones marked), and on a resubmission its own notes from the previous round.
+  Messages are read through `ToolContext.around` / `show`, the same path as
+  `get_context`, so they are in the egress log under tool `critic`.
+- **Output:** structured outputs (`output_config.format`, a strict JSON schema), not
+  forced tool use, which Opus 5.5 rejects. Field order is `issues`, `scores`, `verdict`
+  so the verdict is written after its reasons. Scores are integer enums 1–5 (strict
+  schemas have no `minimum`/`maximum`) and are re-validated client-side; a `revise` or
+  `reject` without issues counts as malformed.
+- **Model and effort:** `claude-opus-5-5`, adaptive thinking (`display: "summarized"`,
+  logged for calibration), effort **`medium`**: each call is a bounded reading task over
+  ~10–40 short messages, not an open search, and a run makes ~20–40 of them, so medium
+  buys careful reading of tone and attribution without high's thinking spend. It is the
+  first knob to turn if calibration shows misses. `fallbacks: "default"` as in the loop.
+- **Prompt and caching:** `verify/critic.md` is the whole system prompt and is
+  byte-stable (~1.6k tokens, above the cache minimum): the role, what the input
+  contains and what code already checked (so the critic judges meaning, not ids), a
+  read-the-excerpts-first procedure, the six misreadings it must catch (sarcasm read as
+  sincere; affection aimed at someone else, including "love you guys", quotes and
+  "love your …"; wrong attribution of a line, joke or pet name; claims the excerpts
+  don't support; numbers with no metric or a metric that measures something else; dates
+  off the sender's local time), the §12 tone rules, verdict definitions, and anchored
+  1–5 rubrics for accuracy, specificity, delight and tone. The cache breakpoint is on
+  the system block; all per-insight text is in the user message after it.
+- **Verdicts:** `pass` when every claim is supported (bland but accurate cards pass with
+  low specificity/delight; curation ranks them down). `revise` for a fixable problem.
+  `reject` only when the core claim is false or rests on a misreading no rewording can
+  fix, or the card is mean. Never for being sensitive: fights, silences and hard
+  stretches pass when accurate. On a resubmission the critic checks its previous issues
+  and doesn't raise new minor ones.
+- **Revise loop** (`tools.propose_insight`): the first critic round opens a draft
+  (`draft_001`, …). A revise comes back as a tool error with the issues and the draft id;
+  the agent resubmits with `revises=<id>`. A resubmission without `revises` that has the
+  same kind and shares a cited message with an open or rejected draft counts as one too,
+  so the cap can't be sidestepped. A third non-pass (after 2 revisions) becomes a reject,
+  and the error says so. Rejected drafts are closed: resubmitting one is refused without
+  a critic call. `verification.revisions` is the number of rounds before the pass.
+- **No verdict:** a refusal from the whole fallback chain (no retry), malformed output
+  twice (one retry), an API error, or no budget for another call raise
+  `CriticUnavailable`. The insight is kept with `critic: "pending"` and the reason in
+  `verification.critic_notes`, and the agent is told it was kept unverified. Dropping it
+  would turn a classifier refusal on an intimate moment into a rejection for
+  sensitivity; curation still keeps only `pass`.
+- **Budget and logs:** critic responses are charged to the run's `Budget` as kind
+  `critic`: they count toward `spent` and `--max-cost`, but not toward the agent's
+  next-turn projection. Each call is guarded by its own estimate (the larger of the last
+  and average critic call; $0.06 before the first). The run log has `critic_*` events
+  (`critic_request_static` once, then `critic_request`, `critic_response` with cost and
+  run total, `critic_verdict`, or the failure events); `report.json` `run` carries
+  `critic_calls` and `critic_cost_usd`.
+- **Calibration:** `evals/critic_calibration.py` has 11 hand-labelled insights on the
+  bean-goose sample (correct, subtly wrong, bland), all passing step 1.
+  `sincehello eval critic --max-cost 0.5` runs each once and reports agreement.
 
 ### 7.7 Curation
 
@@ -558,14 +638,14 @@ Each proposed insight passes through:
   "evidence": [{ "message_id": "imessage:8812", "quote": "i love you" }],
   "era_id": "era_2",
   "scores": { "accuracy": 5, "specificity": 5, "delight": 5, "tone": 5 },
-  "verification": { "deterministic": "pass", "critic": "pass", "revisions": 0 }
+  "verification": { "deterministic": "pass", "critic": "pass", "revisions": 0, "critic_notes": [] }
 }
 ```
 
 Top-level `report.json` fields: `person`, `range`, `sources`, `deck[]` (ordered insight
 ids), `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text), and
 `run{run_id, status, cost_usd, tokens, turns, messages_shared, pct_shared, model, effort,
-version}`. Pydantic models live in `sincehello/report/schema.py`.
+version, critic_calls, critic_cost_usd}` (critic spend is included in `cost_usd`). Pydantic models live in `sincehello/report/schema.py`.
 
 Two additions to the insight, so its claims can be re-checked (§7.6): `metric.path` is a
 dotted path into the query's value (`"share.them"`, `"top.0.date"`) and `metric.value`
@@ -585,8 +665,14 @@ than fresh input.
 | Role | Default model | Notes |
 |---|---|---|
 | Discovery agent | `claude-opus-5-5` | Effort tuned via evals |
-| Critic | `claude-opus-5-5` | Starts on the strongest model to set the quality bar. Later, eval `claude-sonnet-5-5`/`claude-haiku-5-5` as the critic, and switch only if agreement with the Opus critic and with human ratings holds |
+| Critic | `claude-opus-5-5`, effort `medium` | Starts on the strongest model to set the quality bar. Later, eval `claude-sonnet-5-5`/`claude-haiku-5-5` as the critic, and switch only if agreement with the Opus critic and with human ratings holds |
 | LLM judge (evals only) | `claude-opus-5-5` | Batch API for eval runs (50% cheaper) |
+
+**Critic call (estimate, not yet measured live):** a ~1.6k-token cached system prompt
+(written once at $5/M, then read at $0.20/M), ~1–2k fresh input tokens (the card plus
+11–40 messages), and ~0.7–1.5k output tokens at `medium` effort, thinking included.
+That is about **$0.02–0.04 per call**, dominated by output, so ~30 calls add roughly
+$0.6–1.2 to a run. Critic spend counts toward `--max-cost`.
 
 **Rough estimate for one run** (to be measured, not trusted). A 60-turn agent loop
 with ~40k cached prefix plus growing tool results comes to about 2–3M input tokens,
@@ -662,7 +748,8 @@ sincehello connect                 # list connectors and their status
 sincehello connect imessage        # check access, ingest
 sincehello people                  # list people, by message count
 sincehello stats <person> [--json] # local stats only (§7.1), no LLM
-sincehello merge <person> <handle> # manual identity merge
+sincehello merge <person> <handle> # manual identity merge (person id or one of their handles)
+sincehello me <handle>             # mark a handle as your own
 sincehello analyze <person> [--max-cost 5] [--deck-size 15]
                                    # the "one click": sync all connected sources → analyze
                                    # (M4: --model, --effort, --max-turns; no sync or deck yet)
@@ -670,6 +757,9 @@ sincehello report <run-id>         # print report.md
 sincehello rate <run-id>           # human rating pass
 sincehello eval [--suite synthetic]
 sincehello eval agent --sample bean-goose   # M4 hook: agent recall of planted facts
+sincehello eval critic [--max-cost 0.5]     # M5: critic agreement with labelled insights
+                                   # analyze / eval agent run the critic by default;
+                                   # --no-critic, --critic-model, --critic-effort
 ```
 
 The later TypeScript UI is a front end for these same commands and the

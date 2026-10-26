@@ -82,9 +82,11 @@ class Scores(_Strict):
 
 class Verification(_Strict):
     deterministic: Literal["pass", "fail", "pending"] = "pending"
-    # "pending" until the M5 critic exists (SPEC.md §7.6 step 2).
+    # SPEC.md §7.6 step 2. "pending" when no critic ran (--no-critic) or it couldn't give
+    # a verdict (refusal, malformed output, budget); curation keeps only "pass".
     critic: Literal["pass", "revise", "reject", "pending"] = "pending"
-    revisions: int = 0
+    revisions: int = 0  # critic revise rounds before this version passed
+    critic_notes: list[str] = Field(default_factory=list)  # the critic's latest notes
 
 
 class Insight(InsightDraft):
@@ -104,6 +106,8 @@ class RunInfo(_Strict):
     model: str
     effort: str
     version: str
+    critic_calls: int = 0  # included in cost_usd and tokens
+    critic_cost_usd: float = 0.0
 
 
 class Report(_Strict):

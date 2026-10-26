@@ -24,6 +24,7 @@ These are checked by code when you call propose_insight, and a failing insight c
 - Only 1:1 messages count. Group chats and reactions (tapbacks such as Loved "...") are not evidence.
 - Read context before interpreting a moment. Sarcasm, jokes, quoted text, and talk about other people can look like something they aren't.
 - If a check fails, fix the cause (a different pattern, the right id, the recomputed value) instead of resubmitting the same claim.
+- An insight that passes these checks then goes to an independent critic, who reads the cited messages in context. If it asks for a revision, fix what it names and resubmit with `revises` set to the draft id it gave you; you get at most two revisions. If it rejects an insight, drop that claim and move on.
 
 # Tone
 

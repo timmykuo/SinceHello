@@ -26,6 +26,7 @@ from pydantic import ValidationError
 
 from sincehello.agent.context import (
     MAX_TEXT,
+    Draft,
     ToolContext,
     ToolError,
     compile_pattern,
@@ -48,6 +49,8 @@ MINERS_MODULE = "sincehello.analysis.miners"  # mine
 
 # --- M5 hook: the LLM critic --------------------------------------------------------
 
+MAX_REVISIONS = 2  # critic revise rounds per insight; then a revise becomes a reject
+
 
 @dataclass
 class Verdict:
@@ -56,10 +59,18 @@ class Verdict:
     scores: Scores | None = None
 
 
+class CriticUnavailable(Exception):
+    """The critic couldn't give a verdict: a refusal, malformed output twice, an API
+    error, or no budget left. The insight is kept with critic="pending" (unverified)."""
+
+
 class Critic(Protocol):
     """SPEC.md §7.6 step 2. Runs on insights that passed the deterministic checks.
 
-    Not implemented in M4: with no critic, accepted insights carry critic="pending".
+    On a resubmission, `insight.verification.revisions` is the round (1 or 2) and
+    `insight.verification.critic_notes` holds the previous round's issues. Raises
+    `CriticUnavailable` when it can't judge. With no critic (`--no-critic`), accepted
+    insights carry critic="pending". The real one is `verify.critic.LLMCritic`.
     """
 
     def __call__(self, insight: Insight, ctx: ToolContext) -> Verdict: ...
@@ -207,11 +218,8 @@ def count(
 def get_context(
     ctx: ToolContext, message_id: str, before: int = 5, after: int = 5
 ) -> dict[str, Any]:
-    target = ctx.get(message_id)
-    convo = [m for m in ctx.messages if m.conversation_id == target.conversation_id]
-    i = convo.index(target)
     before, after = max(0, min(before, MAX_CONTEXT)), max(0, min(after, MAX_CONTEXT))
-    window = convo[max(0, i - before) : i + after + 1]
+    window = ctx.around(message_id, before, after)
     return {
         "target": message_id,
         "messages": [ctx.show(m, "get_context") for m in window],
@@ -255,7 +263,7 @@ def list_candidates(ctx: ToolContext, kind: str = "") -> dict[str, Any]:
     return {"kind": kind or "all", "candidates": out}
 
 
-def propose_insight(ctx: ToolContext, **insight: Any) -> dict[str, Any]:
+def propose_insight(ctx: ToolContext, revises: str = "", **insight: Any) -> dict[str, Any]:
     try:
         draft = InsightDraft.model_validate(insight)
     except ValidationError as e:
@@ -271,15 +279,99 @@ def propose_insight(ctx: ToolContext, **insight: Any) -> dict[str, Any]:
         raise ToolError("insight failed verification:\n- " + "\n- ".join(failures))
     ins = Insight(id=f"ins_{len(ctx.insights) + 1:03d}", **draft.model_dump())
     ins.verification.deterministic = "pass"
-    if ctx.critic is not None:  # M5: LLM critic + revise loop (SPEC.md §7.6 step 2)
+    if ctx.critic is None:
+        ctx.insights.append(ins)
+        return {"status": "accepted", "id": ins.id, "insights_so_far": len(ctx.insights)}
+    return _criticize(ctx, ins, _draft_for(ctx, draft, revises))
+
+
+def _draft_for(ctx: ToolContext, draft: InsightDraft, revises: str) -> Draft:
+    """The revise-loop entry this proposal belongs to, with its revision count bumped
+    when it is a resubmission."""
+    cited = {ev.message_id for ev in draft.evidence}
+    if revises:
+        d = ctx.drafts.get(revises)
+        if d is None:
+            raise ToolError(
+                f"unknown draft {revises!r}: `revises` takes the draft id from a critic"
+                " 'revise' result; leave it empty for a new insight"
+            )
+    else:
+        # A resubmission without `revises` (same kind, a cited message in common) still
+        # counts as one, so the revision cap can't be sidestepped.
+        d = next(
+            (
+                d
+                for d in ctx.drafts.values()
+                if d.status in ("open", "rejected") and d.kind == draft.kind and d.cited & cited
+            ),
+            None,
+        )
+        if d is None:
+            d = Draft(f"draft_{len(ctx.drafts) + 1:03d}", draft.kind, cited)
+            ctx.drafts[d.id] = d
+            return d
+    if d.status != "open":
+        ctx.rejected_proposals += 1
+        raise ToolError(
+            f"this resubmits {d.id}, which is closed ({d.status}); critic notes:\n- "
+            + "\n- ".join(d.notes or ["none"])
+            + "\nDon't resubmit it; propose a different insight."
+        )
+    d.revisions += 1
+    d.cited |= cited
+    return d
+
+
+def _criticize(ctx: ToolContext, ins: Insight, d: Draft) -> dict[str, Any]:
+    """SPEC.md §7.6 step 2: pass is accepted; revise goes back to the agent with the
+    critic's notes, at most MAX_REVISIONS times; reject closes the draft."""
+    ins.verification.revisions = d.revisions
+    ins.verification.critic_notes = list(d.notes)  # the previous round's, for the critic
+    try:
         verdict = ctx.critic(ins, ctx)
-        if verdict.verdict != "pass":
-            ctx.rejected_proposals += 1
-            raise ToolError(f"critic says {verdict.verdict}:\n- " + "\n- ".join(verdict.issues))
+    except CriticUnavailable as e:
+        d.status = "unverified"
+        ins.verification.critic_notes = [f"critic unavailable: {e}"]
+        ctx.insights.append(ins)
+        return {
+            "status": "accepted_unverified",
+            "id": ins.id,
+            "insights_so_far": len(ctx.insights),
+            "note": f"The critic couldn't review this insight ({e}). It is kept but"
+            " unverified. Carry on with other insights.",
+        }
+    d.notes = list(verdict.issues)
+    if verdict.verdict == "pass":
+        d.status = "accepted"
         ins.verification.critic = "pass"
+        ins.verification.critic_notes = list(verdict.issues)
         ins.scores = verdict.scores or ins.scores
-    ctx.insights.append(ins)
-    return {"status": "accepted", "id": ins.id, "insights_so_far": len(ctx.insights)}
+        ctx.insights.append(ins)
+        out: dict[str, Any] = {
+            "status": "accepted",
+            "id": ins.id,
+            "insights_so_far": len(ctx.insights),
+        }
+        if verdict.issues:
+            out["critic_notes"] = verdict.issues
+        return out
+    ctx.rejected_proposals += 1
+    issues = "\n- ".join(verdict.issues or ["(no notes)"])
+    if verdict.verdict == "revise" and d.revisions < MAX_REVISIONS:
+        left = MAX_REVISIONS - d.revisions
+        raise ToolError(
+            f"critic says revise ({d.id}, {left} revision{'s' if left > 1 else ''} left):\n"
+            f"- {issues}\nFix these and call propose_insight again with revises={d.id!r}."
+            " If the evidence can't support the claim, drop it instead."
+        )
+    d.status = "rejected"
+    why = (
+        f"critic says {verdict.verdict} after {MAX_REVISIONS} revisions, so {d.id} is rejected"
+        if verdict.verdict == "revise"
+        else f"critic says reject ({d.id})"
+    )
+    raise ToolError(f"{why}:\n- {issues}\nThis insight is closed. Don't resubmit it; move on.")
 
 
 def finish(ctx: ToolContext, summary: str) -> dict[str, Any]:
@@ -376,6 +468,11 @@ def _insight_schema() -> dict[str, Any]:
             "metric": metric,
             "era_id": {"type": "string"},
             "first": first,
+            "revises": {
+                "type": "string",
+                "description": "Only when resubmitting an insight the critic sent back:"
+                " the draft id from that result (e.g. 'draft_003').",
+            },
         },
         ["category", "kind", "title", "headline", "body", "evidence"],
     )
@@ -500,7 +597,10 @@ def build_tools() -> list[Tool]:
             "propose_insight",
             "Submit one insight. It is checked immediately: cited ids must exist in your 1:1"
             " chat, quotes must be verbatim, 'first' claims are re-run, and metrics must"
-            " recompute to the claimed value. On failure you get the reasons; fix and resubmit.",
+            " recompute to the claimed value. On failure you get the reasons; fix and resubmit."
+            f" Then an independent critic reads the cited messages in context: it may accept,"
+            f" ask for a revision (resubmit with `revises`, at most {MAX_REVISIONS} times),"
+            " or reject.",
             _insight_schema(),
             propose_insight,
         ),
