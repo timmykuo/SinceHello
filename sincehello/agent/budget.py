@@ -139,12 +139,20 @@ class Budget:
         return self.spent >= WRAP_UP_AT * self.max_cost
 
 
-def task_budget_tokens(max_cost: float, model: str) -> int:
-    """An advisory `task_budget` (tokens) roughly matching the dollar cap.
+# What one task-budget token cost in live runs, as a share of the output price. The
+# budget counts output plus tool results; the re-read history it doesn't count is mostly
+# cache reads, so a token costs well under the output rate. Two live runs at a $1 cap
+# (30k-token budget) both stopped near $0.37, i.e. about 0.62x.
+SPEND_PER_BUDGET_TOKEN = 0.62
 
-    The task budget counts what the model generates plus the tool results it reads, so
-    price it at the output rate and keep 40% headroom for the re-read history, which it
-    doesn't count but we pay for. The API minimum is 20,000.
+
+def task_budget_tokens(max_cost: float, model: str) -> int:
+    """An advisory `task_budget` (tokens) that runs out about when wrap-up fires.
+
+    It only paces the model; the dollar cap in `Budget` is the hard limit, so a budget
+    that turns out generous ends in the usual wrap-up instead of an overrun. The API
+    minimum is 20,000.
     """
     p = PRICES.get(model, FALLBACK_PRICE)
-    return max(20_000, int(0.6 * max_cost / p.output * 1_000_000))
+    per_token = SPEND_PER_BUDGET_TOKEN * p.output / 1_000_000
+    return max(20_000, int(WRAP_UP_AT * max_cost / per_token))

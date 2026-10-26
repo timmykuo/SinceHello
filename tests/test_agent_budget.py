@@ -62,6 +62,6 @@ def test_budget_projection_and_wrap_up():
 
 
 def test_task_budget_tracks_the_dollar_cap():
-    assert task_budget_tokens(5.0, "claude-opus-5-5") == 150_000
-    assert task_budget_tokens(1.0, "claude-opus-5-5") == 30_000
+    assert task_budget_tokens(5.0, "claude-opus-5-5") == 322_580
+    assert task_budget_tokens(1.0, "claude-opus-5-5") == 64_516
     assert task_budget_tokens(0.1, "claude-opus-5-5") == 20_000  # API minimum
