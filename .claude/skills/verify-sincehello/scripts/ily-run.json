@@ -1,0 +1,20 @@
+[
+  {"tool": "get_overview"},
+  {
+    "tool": "propose_insight",
+    "input": {
+      "category": "milestone",
+      "kind": "first_occurrence",
+      "title": "The first \"I love you\"",
+      "headline": "Alex said it first, May 14, 2021, 11:48pm",
+      "body": "You replied 41 seconds later with \"i love you too 🥹\".",
+      "evidence": [
+        {"message_id": "synthetic:bean-goose-s42-000507", "quote": "i love you"},
+        {"message_id": "synthetic:bean-goose-s42-000509", "quote": "i love you too 🥹"}
+      ],
+      "first": {"pattern": "\\b(i love you|love you|ily|love u)\\b", "sender": "any"}
+    }
+  },
+  {"critic": "pass"},
+  {"tool": "finish", "input": {"summary": "ok"}}
+]
