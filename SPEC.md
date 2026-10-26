@@ -445,7 +445,7 @@ Implementation notes (`sincehello/analysis/miners.py`, M2):
 | Tool | Returns | Notes |
 |---|---|---|
 | `get_overview()` | Person names, date range, totals, era list, top-level stats | Called first; a cheap orientation |
-| `get_stats(name, params)` | One stat block from §7.1 | Numbers only, no message text |
+| `get_stats(name, start?, end?, params?)` | One stat block from §7.1; `params` is a list of `{name, value}` pairs (strict schemas allow only 24 optional parameters across all tools) | Numbers only, no message text |
 | `search_messages(query, mode, sender?, start?, end?, limit≤25)` | Matching messages (id, ts, sender, text) | `mode`: keyword (FTS5) or regex |
 | `first_occurrence(pattern, sender?)` | Earliest match plus its id | The deterministic answer to "first time…" |
 | `count(pattern, sender?, group_by?)` | Counts by sender, year, or era | For "you said X 412 times" |

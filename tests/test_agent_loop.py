@@ -362,3 +362,43 @@ def test_replayable_drops_blocks_before_the_last_fallback():
     assert [b["type"] for b in kept] == ["text", "thinking", "tool_use"]
     assert kept[2]["name"] == "finish"
     assert as_dict(m.content[0])["type"] == "thinking"
+
+
+def _optional_params(schema):
+    n = 0
+    if schema.get("type") == "object":
+        required = set(schema["required"])
+        for key, sub in schema["properties"].items():
+            n += (key not in required) + _optional_params(sub)
+    elif schema.get("type") == "array":
+        n += _optional_params(schema["items"])
+    return n
+
+
+def test_strict_tools_fit_the_api_limit_and_get_stats_takes_param_pairs(bean_goose, tmp_path):
+    # The first live run died on turn 1: the API rejects strict schemas with more than 24
+    # optional parameters in total, and get_stats.params alone had 21.
+    script = [
+        message(
+            tool_use(
+                "get_stats",
+                {
+                    "name": "who_texts_first",
+                    "start": "2021-01-01",
+                    "params": [{"name": "gap_hours", "value": 12}],
+                },
+            )
+        ),
+        message(tool_use("finish", {"summary": "done"})),
+    ]
+    result, client = run(bean_goose, tmp_path, script)
+
+    assert result.status == "finished"
+    tools = client.requests[0]["tools"]
+    strict = [t for t in tools if t.get("strict")]
+    assert len(strict) == len(tools)
+    assert sum(_optional_params(t["input_schema"]) for t in strict) <= 24
+    [res] = results_of(client.requests[1])
+    assert not res.get("is_error")
+    params = json.loads(res["content"])["params"]
+    assert params["gap_hours"] == 12 and params["start_utc"]

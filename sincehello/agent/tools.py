@@ -118,17 +118,33 @@ def get_overview(ctx: ToolContext) -> dict[str, Any]:
     return out
 
 
-def get_stats(ctx: ToolContext, name: str, params: dict[str, Any] | None = None) -> dict:
+def get_stats(
+    ctx: ToolContext,
+    name: str,
+    start: str | None = None,
+    end: str | None = None,
+    params: list[dict[str, Any]] | None = None,
+) -> dict:
     if name not in STATS:
         raise ToolError(f"unknown stat {name!r}; known: {', '.join(STATS)}")
-    params = dict(params or {})
-    for key in ("start", "end"):
-        if key in params:
-            params[f"{key}_utc"] = parse_when(params.pop(key))
+    # A list of {name, value} pairs, not an object with one optional key per stat
+    # parameter: strict schemas allow only 24 optional parameters across all tools.
+    defaults = STATS[name].defaults
+    kwargs: dict[str, Any] = {}
+    for p in params or []:
+        key, value = p["name"], p["value"]
+        if not isinstance(defaults.get(key), float):  # the schema types every value "number"
+            if value != int(value):
+                raise ToolError(f"{key} must be an integer, got {value}")
+            value = int(value)
+        kwargs[key] = value
+    for key, when in (("start", start), ("end", end)):
+        if when is not None:
+            kwargs[f"{key}_utc"] = parse_when(when)
     if STATS[name].local_time:
-        params.setdefault("default_tz", ctx.default_tz)
+        kwargs.setdefault("default_tz", ctx.default_tz)
     try:
-        result = compute(ctx.store, ctx.person_id, name, params)
+        result = compute(ctx.store, ctx.person_id, name, kwargs)
     except ValueError as e:
         raise ToolError(str(e)) from None
     d = result.to_dict()
@@ -380,13 +396,15 @@ def _obj(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
 
 
 def _stat_params_schema() -> dict[str, Any]:
-    """Every parameter any stat takes, typed from its default. Wrong ones get an error."""
-    props: dict[str, Any] = {"start": DATE, "end": DATE}
-    for spec in STATS.values():
-        for p, default in spec.defaults.items():
-            kind = "number" if isinstance(default, float) else "integer"
-            props.setdefault(p, {"type": kind})
-    return _obj(dict(sorted(props.items())), [])
+    """Every parameter any stat takes, as {name, value} pairs. Wrong ones get an error."""
+    names = sorted({p for spec in STATS.values() for p in spec.defaults})
+    return {
+        "type": "array",
+        "items": _obj(
+            {"name": {"type": "string", "enum": names}, "value": {"type": "number"}},
+            ["name", "value"],
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -473,11 +491,14 @@ def build_tools() -> list[Tool]:
         Tool(
             "get_stats",
             "One stat block from the local stats engine (numbers only, no message text)."
-            " Returns a query_id to cite in an insight's metric. Optional params: start/end"
-            " window plus the stat's own parameters (see get_overview.available_stats).",
+            " Returns a query_id to cite in an insight's metric. Optional: a start/end"
+            " window, and params as [{name, value}] pairs for the stat's own parameters"
+            " (see get_overview.available_stats).",
             _obj(
                 {
                     "name": {"type": "string", "enum": sorted(STATS)},
+                    "start": DATE,
+                    "end": DATE,
                     "params": _stat_params_schema(),
                 },
                 ["name"],
