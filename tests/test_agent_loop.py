@@ -12,6 +12,7 @@ from fake_anthropic import ScriptedClient, message, refusal, text, thinking, too
 from sincehello.agent import AgentConfig, run_agent
 from sincehello.agent.loop import FALLBACK_BETA, TASK_BUDGET_BETA, replayable
 from sincehello.agent.runlog import as_dict
+from sincehello.agent.tools import MAX_SEARCH
 
 ILY = r"\b(i love you|love you|ily|love u)\b"
 SID = "synthetic:bean-goose-s42-"
@@ -128,7 +129,11 @@ def test_full_run_with_parallel_calls_and_a_corrected_insight(bean_goose, tmp_pa
     # Run output.
     out = result.run_dir
     report = json.loads((out / "report.json").read_text())
-    assert report["run"]["status"] == "finished" and report["deck"] == []
+    assert report["run"]["status"] == "finished"
+    # Curation ordered the deck: the milestone opens, language follows (SPEC.md §7.7).
+    categories = {i["id"]: i["category"] for i in report["insights"]}
+    assert [categories[i] for i in report["deck"]] == ["milestone", "language"]
+    assert report["curation"]["dropped"] == {}
     assert report["insights"][0]["verification"]["deterministic"] == "pass"
     assert result.cost_usd > 0
     assert report["run"]["cost_usd"] == pytest.approx(result.cost_usd, abs=1e-6)
@@ -425,3 +430,134 @@ def test_first_only_gates_first_occurrence_and_escaped_quotes_still_match(bean_g
     assert not any(r.get("is_error") for r in results_of(client.requests[1]))
     [insight] = result.report.insights
     assert insight.first is None
+
+
+def test_stat_parameters_are_listed_and_errors_say_what_a_stat_takes(bean_goose, tmp_path):
+    # Live runs: the agent guessed `top_n` for top_emoji and distinctive_phrases, which
+    # called it `k`, and the error didn't say what they took instead.
+    script = [
+        message(tool_use("get_overview")),
+        message(
+            tool_use("get_stats", {"name": "top_emoji", "params": [{"name": "top_n", "value": 3}]}),
+            tool_use(
+                "get_stats",
+                {"name": "distinctive_phrases", "params": [{"name": "gap_hours", "value": 3}]},
+            ),
+            tool_use("get_stats", {"name": "totals", "params": [{"name": "top_n", "value": 3}]}),
+        ),
+        message(tool_use("finish", {"summary": "done"})),
+    ]
+    result, client = run(bean_goose, tmp_path, script)
+
+    assert result.status == "finished"
+    [overview] = results_of(client.requests[1])
+    available = json.loads(overview["content"])["available_stats"]
+    assert available["top_emoji"] == {
+        "summary": "Most-used emoji per sender.",
+        "params": {"top_n": 10},
+    }
+    assert available["totals"]["params"] == {}
+    assert available["distinctive_phrases"]["params"]["min_ratio"] == 5.0
+    # One top-N name everywhere.
+    assert not any("k" in s["params"] for s in available.values())
+    assert all("top_n" in available[s]["params"] for s in ("top_words", "top_ngrams"))
+
+    emoji, phrases, totals = results_of(client.requests[2])
+    assert not emoji.get("is_error")
+    body = json.loads(emoji["content"])
+    assert body["params"]["top_n"] == 3 and len(body["value"]["both"]) <= 3
+    assert phrases["is_error"]
+    assert phrases["content"] == (
+        "distinctive_phrases does not take gap_hours;"
+        " it takes: top_n, max_n, min_count, min_ratio, min_baseline_tokens"
+    )
+    assert totals["is_error"] and totals["content"] == "totals does not take top_n; it takes none"
+
+
+def test_empty_search_query_browses_a_time_window(bean_goose, tmp_path):
+    # Live runs: to read a period, the agent searched for dummy regexes like "." or .{25,}.
+    may = {"start": "2021-05-01", "end": "2021-06-01", "mode": "keyword"}
+    moment = {"start": "2021-05-15T03:48:00Z", "end": "2021-05-15T03:50:00Z", "mode": "regex"}
+    script = [
+        message(
+            tool_use("search_messages", {"query": "", **may, "limit": 100}),
+            tool_use("search_messages", {"query": "", **may, "order": "newest", "limit": 3}),
+            tool_use("search_messages", {"query": "", **may, "mode": "regex", "sender": "me"}),
+            tool_use("search_messages", {"query": "", **moment}),
+        ),
+        message(tool_use("finish", {"summary": "done"})),
+    ]
+    result, client = run(bean_goose, tmp_path, script)
+
+    assert result.status == "finished"
+    results = results_of(client.requests[1])
+    assert not any(r.get("is_error") for r in results)
+    oldest, newest, mine, around = (json.loads(r["content"]) for r in results)
+    # Every 1:1 message in May 2021, capped, in time order.
+    assert oldest["total_matches"] == 291 and oldest["returned"] == MAX_SEARCH
+    times = [m["sent_at_utc"] for m in oldest["messages"]]
+    assert times == sorted(times) and times[0] >= "2021-05-01"
+    assert newest["total_matches"] == 291 and newest["returned"] == 3
+    last = [m["sent_at_utc"] for m in newest["messages"]]
+    assert last == sorted(last, reverse=True) and last[0] < "2021-06-01"
+    assert 0 < mine["total_matches"] < 291
+    assert all(m["sender"] == "me" for m in mine["messages"])
+    # The end bound is exclusive; the reaction (000508) is out of scope.
+    assert [m["id"] for m in around["messages"]] == [SID + "000507", SID + "000509"]
+
+    # Every message shown went through the egress log, with its text.
+    egress = json.loads((tmp_path / "run" / "egress.json").read_text())
+    shown = {m["id"] for r in (oldest, newest, mine, around) for m in r["messages"]}
+    logged = {e["message_id"] for e in egress["entries"] if e["with_text"]}
+    assert shown == logged and egress["messages_shared"] == len(logged)
+
+
+def test_list_candidates_then_sample_era_through_the_loop(bean_goose, tmp_path):
+    # Live runs never called the miner or era tools; the prompts now steer toward them.
+    script = [
+        message(tool_use("get_overview")),
+        message(tool_use("list_candidates", {"kind": ""})),
+        message(
+            tool_use("sample_era", {"era_id": "era_2", "n": 10, "strategy": "spike_days"}),
+            tool_use("sample_era", {"era_id": "era_3", "n": 10, "strategy": "longest_threads"}),
+        ),
+        message(tool_use("finish", {"summary": "done"})),
+    ]
+    result, client = run(bean_goose, tmp_path, script)
+    assert result.status == "finished"
+
+    [overview] = results_of(client.requests[1])
+    era_ids = [e["id"] for e in json.loads(overview["content"])["eras"]]
+    assert {"era_2", "era_3"} <= set(era_ids)
+
+    [cands] = results_of(client.requests[2])
+    assert not cands.get("is_error")
+    found = json.loads(cands["content"])["candidates"]
+    assert {"first", "pet_name", "conflict"} <= {c["kind"] for c in found}
+    assert any(c["kind"] == "pet_name" and "bean" in c["label"] for c in found)
+    assert all(i.startswith(SID) for c in found for i in c["message_ids"])
+
+    samples = results_of(client.requests[3])
+    assert len(samples) == 2 and not any(r.get("is_error") for r in samples)
+    for r, era in zip(samples, ["era_2", "era_3"], strict=True):
+        body = json.loads(r["content"])
+        assert body["era"]["id"] == era and body["messages"]
+        assert all(m["id"].startswith(SID) for m in body["messages"])
+
+    egress = json.loads((result.run_dir / "egress.json").read_text())
+    tools_used = {e["tool"] for e in egress["entries"]}
+    assert {"list_candidates", "sample_era"} <= tools_used
+
+
+def test_prompts_steer_toward_miners_eras_and_breadth(bean_goose, tmp_path):
+    result, client = run(bean_goose, tmp_path, [message(tool_use("finish", {"summary": "x"}))])
+    req = client.requests[0]
+    system = req["system"][0]["text"]
+    # get_overview, then list_candidates, then sample_era, in that order.
+    order = [system.index(t) for t in ("get_overview", "list_candidates", "sample_era")]
+    assert order == sorted(order)
+    assert "lead to verify" in system and "one insight per storyline" in system
+    assert "near-duplicate" in system
+    assert {"list_candidates", "sample_era"} <= {t["name"] for t in req["tools"]}
+    kickoff = req["messages"][0]["content"]
+    assert "list_candidates" in kickoff and "sample_era" in kickoff

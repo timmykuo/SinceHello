@@ -9,7 +9,7 @@
   `critic_request_static` once, then per call `critic_request` (the one user message),
   `critic_response` (with cost and the run total), and `critic_verdict`, or
   `critic_malformed` / `critic_refusal` / `critic_api_error` / `critic_skipped`.
-- `report.json`: the draft report (insights unranked; curation is M6).
+- `report.json`: the report, with `deck` filled by curation (SPEC.md §7.7).
 - `egress.json`: which message ids went to Claude, and what share of the history.
 """
 
@@ -23,6 +23,7 @@ from typing import Any
 
 from sincehello import __version__, config
 from sincehello.agent.context import ToolContext, iso
+from sincehello.curate import CurationConfig, curate
 from sincehello.report.schema import Report, RunInfo
 
 
@@ -75,6 +76,7 @@ class RunRecorder:
         turns: int,
         critic_calls: int = 0,
         critic_cost: float = 0.0,
+        curation: CurationConfig | None = None,
     ) -> Report:
         egress = ctx.egress.summary(len(ctx.messages))
         (self.dir / "egress.json").write_text(
@@ -86,6 +88,13 @@ class RunRecorder:
             if q["kind"] == "stat"
         }
         eras = ctx.eras if isinstance(ctx.eras, list) else []
+        for ins in ctx.insights:
+            times = [
+                ctx.messages[ctx.by_id[e.message_id]].sent_at_utc
+                for e in ins.evidence
+                if e.message_id in ctx.by_id
+            ]
+            ins.at_utc = iso(min(times)) if times else None
         report = Report(
             person={"id": ctx.person_id, "name": ctx.person_name},
             range={
@@ -113,5 +122,6 @@ class RunRecorder:
                 critic_cost_usd=round(critic_cost, 6),
             ),
         )
+        report = curate(report, curation)
         (self.dir / "report.json").write_text(report.model_dump_json(indent=2))
         return report

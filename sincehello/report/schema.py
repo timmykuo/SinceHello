@@ -97,6 +97,9 @@ class Insight(InsightDraft):
     id: str
     scores: Scores = Field(default_factory=Scores)
     verification: Verification = Field(default_factory=Verification)
+    # The earliest cited message's time (ISO UTC), set when report.json is written, so
+    # curation can date milestones without the store (SPEC.md §7.7).
+    at_utc: str | None = None
 
 
 class RunInfo(_Strict):
@@ -114,13 +117,24 @@ class RunInfo(_Strict):
     critic_cost_usd: float = 0.0
 
 
+class Curation(_Strict):
+    """How the deck was built (SPEC.md §7.7), so a reader can see what was left out."""
+
+    verified: bool  # every card passed the critic; False when no critic ran (--no-critic)
+    min_cards: int
+    max_cards: int
+    scores: dict[str, float]  # curation score of each eligible insight
+    dropped: dict[str, str]  # insight id -> why it isn't in the deck
+
+
 class Report(_Strict):
     person: dict[str, Any]
     range: dict[str, str | None]
     sources: list[str]
-    deck: list[str]  # ordered insight ids; empty until curation (M6)
+    deck: list[str]  # ordered insight ids, filled by curation (sincehello/curate)
     insights: list[Insight]
     eras: list[dict[str, Any]]
     stats: dict[str, Any]
     summary: str | None
     run: RunInfo
+    curation: Curation | None = None

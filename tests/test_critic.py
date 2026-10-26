@@ -330,6 +330,11 @@ def test_run_with_critic(bean_goose, tmp_path):
     assert end["event"] == "end" and end["critic_calls"] == 2
     egress = json.loads((tmp_path / "run" / "egress.json").read_text())
     assert any(e["tool"] == "critic" for e in egress["entries"])
+    # Curation (SPEC.md §7.7) fills the deck from the critic-passed insight.
+    saved = json.loads((tmp_path / "run" / "report.json").read_text())
+    assert saved["deck"] == ["ins_001"] and saved["curation"]["verified"] is True
+    assert saved["curation"]["scores"]["ins_001"] > 0
+    assert saved["insights"][0]["at_utc"].startswith("2021-05-")
 
 
 def test_no_critic_leaves_insights_pending(bean_goose, tmp_path):
@@ -343,3 +348,5 @@ def test_no_critic_leaves_insights_pending(bean_goose, tmp_path):
     result = run_agent(store, pid, client, AgentConfig(), tmp_path / "run")
     assert result.report.insights[0].verification.critic == "pending"
     assert result.report.run.critic_calls == 0
+    # No critic ran, so the unreviewed insight still makes an (unverified) deck.
+    assert result.report.deck == ["ins_001"] and not result.report.curation.verified

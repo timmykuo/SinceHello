@@ -308,6 +308,10 @@ Implementation notes (`sincehello/analysis/`, M2):
   definition changes.
 - Every stat takes optional `start_utc` / `end_utc` (ms) windows, so era-level stats
   (e.g. reply time by era) reuse the same code once §7.2 exists.
+- Parameter names are shared across stats where they mean the same thing: every
+  "how many to return" parameter is `top_n` (`busiest_day`, `top_words`, `top_ngrams`,
+  `top_emoji`, `distinctive_phrases`). An unknown parameter is an error that lists the
+  ones the stat does take.
 - Definitions, where the bullets above leave room:
   - Calendar-day stats (per year/month, busiest day, streak) count each message on its
     **sender's** local date, like time-of-day stats.
@@ -444,9 +448,9 @@ Implementation notes (`sincehello/analysis/miners.py`, M2):
 
 | Tool | Returns | Notes |
 |---|---|---|
-| `get_overview()` | Person names, date range, totals, era list, top-level stats | Called first; a cheap orientation |
-| `get_stats(name, start?, end?, params?)` | One stat block from §7.1; `params` is a list of `{name, value}` pairs (strict schemas allow only 24 optional parameters across all tools) | Numbers only, no message text |
-| `search_messages(query, mode, sender?, start?, end?, limit≤25)` | Matching messages (id, ts, sender, text) | `mode`: keyword (FTS5) or regex |
+| `get_overview()` | Person names, date range, totals, era list, top-level stats, and each stat's summary, parameters and defaults | Called first; a cheap orientation |
+| `get_stats(name, start?, end?, params?)` | One stat block from §7.1; `params` is a list of `{name, value}` pairs (strict schemas allow only 24 optional parameters across all tools, so the name enum is every stat's parameters; a wrong one gets an error naming the right ones) | Numbers only, no message text |
+| `search_messages(query, mode, sender?, start?, end?, order?, limit≤25)` | Matching messages (id, ts, sender, text) | `mode`: keyword (FTS5) or regex. An empty `query` matches everything, so with `start`/`end` it reads a time window in order |
 | `first_occurrence(pattern, sender?)` | Earliest match plus its id | The deterministic answer to "first time…" |
 | `count(pattern, sender?, group_by?)` | Counts by sender, year, or era | For "you said X 412 times" |
 | `get_context(message_id, before≤15, after≤15)` | Surrounding messages | For reading a moment |
@@ -476,9 +480,16 @@ Tool design rules:
 - **System prompt sets:** the goal (find warm, specific, *true* insights), the seed
   categories (§8), the rule "every claim must cite message ids, and numbers must come
   from stats or count tools", and the tone guidelines (§12).
-- **Agenda:** the agent works through the seed categories, then has free exploration
-  time for "anything else delightful". It ends with `finish`, or when it hits the turn
-  cap or token budget.
+- **Agenda:** orient with `get_overview`, then call `list_candidates` right away and
+  treat the miner output as leads to verify (`get_context`, `first_occurrence`) rather
+  than guessing search patterns. Read each notable era with `sample_era` before writing
+  story or era insights. Then work through the seed categories and use the remaining
+  time for "anything else delightful". Aim for breadth: one insight per storyline, with
+  no near-duplicates (fold a second angle on the same moment into the existing insight).
+  It ends with `finish`, or when it hits the turn cap or token budget. Why: in the first
+  live runs (synthetic and real) the agent never called `list_candidates` or
+  `sample_era`, found firsts with regex guesses that hold up poorly on noisy history,
+  never read inside the eras, and proposed overlapping insights.
 - **Stopping and guards:**
   - Max turns, e.g. 60.
   - Per-run token budget via `task_budget` (beta) so the agent paces itself, plus a
@@ -620,6 +631,44 @@ Implementation notes (`sincehello/verify/critic.py`, M5):
   → eras story → closer.
 - The target deck size is 12–20 cards (configurable).
 
+Implementation notes (`sincehello/curate/rank.py`, M6):
+
+- **Where it runs:** `RunRecorder.write_outputs` curates every report before writing
+  `report.json`, errors and budget stops included. `sincehello curate <run_dir>
+  [--deck-size N]` re-curates an existing run in place. It reads only `report.json`, so it
+  is deterministic and offline: no LLM, no store, no wall clock. `CurationConfig` holds
+  `min_cards` (12), `max_cards` (20), `min_score` (0.2), `spread` (0.75) and
+  `category_cap` (0.4). `--deck-size N` (on `analyze` too) sets `max_cards = N` and
+  `min_cards = min(12, N)`.
+- **Eligible:** deterministic `pass` and critic `pass`. Critic `pending` with no
+  `critic_notes` means no critic ever saw it (`--no-critic`): those go in, and
+  `curation.verified` is false. `pending` with notes means the critic ran but couldn't
+  give a verdict (§7.6): it stays out. The deck is never padded with unverified cards
+  in a critic run.
+- **Score:** `delight/5 × specificity/5 × accuracy/5`. Confidence is the critic's accuracy
+  score. A missing score counts as 3, the rubric midpoint, so a run without a critic
+  scores every card 0.216 and breaks ties by insight id.
+- **Dedupe:** walk the insights best score first. A card is dropped as a duplicate of an
+  already-kept one if it tells the same storyline: the same `first.pattern` (case and
+  whitespace ignored), the same metric `query_id` and `path`, or a story card for the same
+  `era_id`. Within one category it is also a duplicate if at least half of the smaller
+  evidence set is shared, or if title-plus-headline content words have Jaccard ≥ 0.5.
+- **Selection:** the milestone whose earliest cited message is the first message of the
+  history ("since hello") is picked first when eligible. After that, pick greedily by
+  `score × spread^(cards already picked from that category)`. No category may fill more
+  than `ceil(category_cap × max_cards)` cards (at least 2). The cap relaxes only while the
+  deck is under `min_cards`. Past `min_cards`, cards under `min_score` stop the deck
+  (3×3×3 = 0.216 clears it, so bland-but-fine cards fill out a short deck). Never more
+  than `max_cards`. If fewer cards are eligible than `min_cards`, the deck is all of them.
+- **Order:** opener (the earliest-dated milestone, which is "since hello" when it is in)
+  → rhythm/stats → language → free discoveries → the other milestones by date → story
+  cards in era order (`report.eras`; unknown eras last) → closer (the best free
+  discovery). Rhythm, language and free are each sorted best first. Dates come from
+  `Insight.at_utc`, the earliest cited message's time, set when the report is written.
+- **Record:** `report.curation` has `verified`, the sizes used, every eligible
+  insight's score, and `dropped` (insight id → reason: critic verdict, duplicate of …,
+  score under the floor, category full, deck full).
+
 ---
 
 ## 8. Insight catalog (seed goals; the agent can find others)
@@ -651,7 +700,8 @@ Implementation notes (`sincehello/verify/critic.py`, M5):
 ```
 
 Top-level `report.json` fields: `person`, `range`, `sources`, `deck[]` (ordered insight
-ids), `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text), and
+ids, filled by curation, §7.7), `curation{verified, min_cards, max_cards, scores{},
+dropped{}}`, `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text), and
 `run{run_id, status, cost_usd, tokens, turns, messages_shared, pct_shared, model, effort,
 version, critic_calls, critic_cost_usd}` (critic spend is included in `cost_usd`). Pydantic models live in `sincehello/report/schema.py`.
 
@@ -660,7 +710,8 @@ dotted path into the query's value (`"share.them"`, `"top.0.date"`) and `metric.
 is the value there; `first: {pattern, sender}` is required for `kind:
 "first_occurrence"` and dropped on other kinds. `count` and `first_occurrence` return their own query ids
 (`q_count_…`, `q_first_…`), recomputable within a run. Stats, counts and `rhythm`
-insights must carry a metric.
+insights must carry a metric. The pipeline also sets `at_utc`, the earliest cited message's time (ISO UTC),
+so curation can date milestones from `report.json` alone.
 
 ---
 
@@ -817,9 +868,10 @@ sincehello people                  # list people, by message count
 sincehello stats <person> [--json] # local stats only (§7.1), no LLM
 sincehello merge <person> <handle> # manual identity merge (person id or one of their handles)
 sincehello me <handle>             # mark a handle as your own
-sincehello analyze <person> [--max-cost 5] [--deck-size 15]
+sincehello analyze <person> [--max-cost 5] [--deck-size 20]
                                    # the "one click": sync all connected sources → analyze
-                                   # (M4: --model, --effort, --max-turns; no sync or deck yet)
+                                   # (--model, --effort, --max-turns; no sync yet)
+sincehello curate <run-dir> [--deck-size 20]  # re-curate a run's report.json (§7.7)
 sincehello report <run-id>         # print report.md
 sincehello eval [--suite synthetic]
 sincehello eval agent --sample bean-goose   # M4 hook: agent recall of planted facts
@@ -867,7 +919,7 @@ sincehello/
   analysis/        stats.py, eras.py, miners.py
   agent/           loop.py, tools.py, prompts/, budget.py
   verify/          checks.py, critic.py
-  curate/          rank.py
+  curate/          rank.py (dedupe, score, spread, order; §7.7)
   report/          schema.py (pydantic), render_md.py
   cli.py
 evals/
@@ -896,6 +948,8 @@ is pure Python; see §7.2 for why not `ruptures`).
 4. **M4 — Discovery agent (LOOP 1):** tools, manual loop, budget guard, egress log.
 5. **M5 — Verification (LOOP 2):** deterministic checks plus critic, and the revise loop.
 6. **M6 — Curation plus final report;** human rater; LLM judge calibrated against my ratings.
+   Curation is done (§7.7): dedupe, score, category spread and Wrapped ordering fill
+   `report.json` `deck` on every run; `sincehello curate` re-curates a run.
    *Eval side built:* judge (per insight and pairwise), `eval rate`, agreement against
    ratings and a labelled set, `eval compare`. *Still to do:* rate real runs and tune
    `judge.md` until agreement holds (§10.3).
