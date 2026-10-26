@@ -14,7 +14,7 @@ from sincehello.analysis.eras import detect_eras
 from sincehello.analysis.miners import KINDS, mine
 from sincehello.analysis.render import render
 from sincehello.connectors import registry
-from sincehello.store import Store
+from sincehello.store import Store, identity
 
 app = typer.Typer(help="Wrapped-style insights from your messages with one person.")
 
@@ -318,3 +318,38 @@ def eval_agent(
         mark = "x" if f["found"] else " "
         typer.echo(f"  [{mark}] {f['id']:<16} {f['type']:<16} {', '.join(f['insights'])}")
     typer.echo(f"recall {scored['found']}/{scored['total']} ({scored['recall']:.0%})")
+
+
+@app.command()
+def merge(
+    person: Annotated[str, typer.Argument(help="Person id, or any handle of that person.")],
+    handle: Annotated[str, typer.Argument(help="Handle to move: raw value or handle id.")],
+) -> None:
+    """Move a handle to a person (manual identity merge)."""
+    with Store(config.store_path()) as store:
+        try:
+            person_id = identity.find_person(store, person)
+            h = identity.find_handle(store, handle)
+            left = identity.merge_handle(store, person_id, h.id)
+        except identity.IdentityError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+    if left is None:
+        typer.echo(f"{h.raw_value} already belongs to person {person_id}.")
+    else:
+        typer.echo(f"Moved {h.raw_value} from person {left} to person {person_id}.")
+
+
+@app.command()
+def me(
+    handle: Annotated[str, typer.Argument(help="Your own handle: raw value or handle id.")],
+) -> None:
+    """Mark a handle as your own, so it drops out of `people`."""
+    with Store(config.store_path()) as store:
+        try:
+            h = identity.find_handle(store, handle)
+            identity.mark_me(store, h.id)
+        except identity.IdentityError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+    typer.echo(f"Marked {h.raw_value} as yours.")
