@@ -30,6 +30,8 @@ a module, and update the spec when a decision changes.
   `verify/checks.py` has the deterministic insight checks and `verify/critic.py` the LLM
   critic (SPEC §7.6; its prompt `verify/critic.md` is the cached prefix, keep it stable
   too); `report/schema.py` the `report.json` models.
+- `sincehello/curate/`: curation (SPEC §7.7). `rank.curate(report)` fills `deck`; it reads
+  only the `Report`, stays deterministic, and runs at the end of every agent run.
 - `tests/`: `fake_anthropic.py` has `ScriptedClient`, the offline stand-in for the API
   client; tests must never call the real API. `conftest.py` has `FakeConnector`, an
   example connector, `ScriptedConnector`
