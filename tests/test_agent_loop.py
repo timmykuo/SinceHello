@@ -128,7 +128,10 @@ def test_full_run_with_parallel_calls_and_a_corrected_insight(bean_goose, tmp_pa
     # Run output.
     out = result.run_dir
     report = json.loads((out / "report.json").read_text())
-    assert report["run"]["status"] == "finished" and report["deck"] == []
+    assert report["run"]["status"] == "finished" and sorted(report["deck"]) == [
+        "ins_001",
+        "ins_002",
+    ]
     assert report["insights"][0]["verification"]["deterministic"] == "pass"
     assert result.cost_usd > 0
     assert report["run"]["cost_usd"] == pytest.approx(result.cost_usd, abs=1e-6)
