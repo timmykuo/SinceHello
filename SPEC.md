@@ -397,11 +397,18 @@ Implementation notes (`sincehello/analysis/miners.py`, M2):
   Scores share a rough 0–1 scale so a mixed list ranks sensibly.
 - Firsts: one candidate per family with any match, `message_ids[0]` is the earliest
   match, followed by the other person's reply (if within 6h) and the other person's own
-  first match. Families and patterns (case-insensitive `re.search`, curly apostrophes
-  straightened): i love you `\b(i love you|love you|ily|ilysm|love u|luv you|luv u|love ya)\b`
-  (score 1.0), miss you (0.85), babe/baby/bae/honey/sweetheart/sweetie/darling (0.8),
-  goodnight/gn/nighty night (0.7), happy birthday/bday/hbd (0.7). Details carry the
-  sender's local time, reply delay, and counts per sender.
+  first match. Each family is a list of phrases matched fuzzily (`miners.fuzzy_phrase`):
+  every letter may repeat ("i loooove youuu", "ilyyy", "gnnn"), spaces may be any
+  whitespace run, and apostrophes are optional, with word boundaries on both ends so
+  near-misses like "love your", "lovely" or "i missed your call" don't count. Matching is
+  case-insensitive `re.search` with curly apostrophes straightened; the compiled pattern is
+  in `details.pattern` so a verifier can re-run it. Families: i love you (love you/u/ya,
+  luv, lov, ily, ilysm, ilu, "in love with you", "i ❤️ you" / "i <3 u"; score 1.0), miss
+  you (0.85), babe/baby/bae/honey/sweetheart/sweetie/darling (0.8), goodnight (good
+  night/nite, gnight, gn, night night, nighty night; 0.7), happy birthday (bday, b-day,
+  birfday, hbd; 0.7). Intensifiers need no rule: "i love you sooo much" and "i really love
+  you" contain "love you". Details carry the matched text, the sender's local time, reply
+  delay, and counts per sender.
 - Pet names: tokens used in ≥ 5 messages, alphabetic, 2–12 letters, ≥ 50% of uses as a
   message's first or last word, a per-message rate ≥ 2x higher for one person, not a
   name of anyone in the store, not in `common_english.txt` or the chat-slang list

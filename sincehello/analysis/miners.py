@@ -72,14 +72,68 @@ def mine(
 
 # --- firsts ------------------------------------------------------------------
 
+
+def fuzzy_phrase(phrase: str) -> str:
+    """Regex for a chat phrase that tolerates how people stretch and squash it.
+
+    Every letter may repeat ("i loooove youuu", "ilyyy", "gnnn"), spaces may be any run of
+    whitespace, and apostrophes are optional ("im" for "i'm"). Other characters match as
+    written. Word boundaries are the caller's job.
+    """
+    out = []
+    for ch in phrase:
+        if ch.isalpha():
+            out.append(re.escape(ch) + "+")
+        elif ch == " ":
+            out.append(r"\s+")
+        elif ch == "'":
+            out.append("'?")
+        else:
+            out.append(re.escape(ch))
+    return "".join(out)
+
+
+def _family(*phrases: str, raw: tuple[str, ...] = ()) -> str:
+    """One case-insensitive pattern: any fuzzy phrase (longest first) or raw regex."""
+    alternatives = [fuzzy_phrase(p) for p in sorted(phrases, key=lambda p: (-len(p), p))]
+    return r"\b(" + "|".join([*raw, *alternatives]) + r")\b"
+
+
+_HEART = r"(?:<3|[\u2764\u2665]\ufe0f?|\U0001f495|\U0001f496|\U0001f497|\U0001f60d)"
+
 # (name, pattern, weight). Patterns are matched case-insensitively with re.search over
 # message text (curly apostrophes straightened). Weight is the candidate's score.
+# Intensifiers need no special case: "i love you sooo much" and "i really love you" both
+# contain "love you".
 FIRST_FAMILIES: tuple[tuple[str, str, float], ...] = (
-    ("i love you", r"\b(i love you|love you|ily|ilysm|love u|luv you|luv u|love ya)\b", 1.0),
-    ("miss you", r"\b(i miss you|miss you|miss u|missing you|miss ya)\b", 0.85),
-    ("babe", r"\b(babe|baby|bae|honey|sweetheart|sweetie|darling)\b", 0.8),
-    ("goodnight", r"\b(good ?night|gn|nighty? ?night|night night)\b", 0.7),
-    ("happy birthday", r"\b(happy (birthday|bday|b-day)|hbd)\b", 0.7),
+    (
+        "i love you",
+        _family(
+            *("i love you", "love you", "love u", "love ya", "luv you", "luv u", "luv ya"),
+            *("lov you", "lov u", "ily", "ilysm", "ilu", "in love with you"),
+            raw=(rf"i\s*{_HEART}+\s*(?:y+o+u+|u+)",),
+        ),
+        1.0,
+    ),
+    (
+        "miss you",
+        _family("miss you", "miss u", "miss ya", "missing you", "missin you", "missing u"),
+        0.85,
+    ),
+    ("babe", _family("babe", "baby", "bae", "honey", "sweetheart", "sweetie", "darling"), 0.8),
+    (
+        "goodnight",
+        _family(
+            *("goodnight", "good night", "goodnite", "good nite", "gnight", "gn"),
+            *("night night", "nighty night", "nite nite"),
+        ),
+        0.7,
+    ),
+    (
+        "happy birthday",
+        _family("happy birthday", "happy bday", "happy b-day", "happy birfday", "hbd"),
+        0.7,
+    ),
 )
 
 
