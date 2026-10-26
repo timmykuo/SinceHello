@@ -29,3 +29,4 @@ a module, and update the spec when a decision changes.
 - Ingest must be idempotent. Re-running a connector never duplicates rows.
 - Analysis covers 1:1 conversations only (`conversation.is_group = 0`). Still store group chats.
 - English only in v1.
+- PRs must pass CI (`.github/workflows/ci.yml`: ruff format check, ruff lint, pytest) before merging.
