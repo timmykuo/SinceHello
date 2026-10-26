@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from conftest import ScriptedConnector
 
-from sincehello.analysis.miners import KINDS, mine
+from sincehello.analysis.miners import FIRST_FAMILIES, KINDS, mine
 from sincehello.connectors import ConversationRecord, HandleRecord, MessageRecord
 from sincehello.connectors.synthetic import SAMPLE_DIR, SyntheticConnector
 from sincehello.store import Store
@@ -187,6 +188,58 @@ def test_firsts_skip_group_chats_and_near_misses(store):
     assert ily.details["reply"]["delay_s"] == 36
     assert firsts["goodnight"].details["sender"] == "me"
     assert "miss you" not in firsts
+
+
+@pytest.mark.parametrize(
+    ("family", "text", "matches"),
+    [
+        ("i love you", "i love you sooooo much", True),
+        ("i love you", "i loooove you", True),
+        ("i love you", "I LOVE YOUUUU", True),
+        ("i love you", "ilyyyy", True),
+        ("i love you", "i luv uuu", True),
+        ("i love you", "love  you", True),
+        ("i love you", "i\u2019m so in love with you", True),
+        ("i love you", "i \u2764\ufe0f you", True),
+        ("i love you", "i <3 u", True),
+        ("i love you", "ok i love your playlist taste", False),
+        ("i love you", "i loved your dog", False),
+        ("i love you", "lovely to see you", False),
+        ("i love you", "Loved \u201ci love you\u201d", True),  # reactions are excluded upstream
+        ("miss you", "missss youuu", True),
+        ("miss you", "i missed your call", False),
+        ("goodnight", "goooodnight!!", True),
+        ("goodnight", "gnnn", True),
+        ("goodnight", "good nite", True),
+        ("goodnight", "oh my god night shift again", False),
+        ("happy birthday", "happy bdayyyy", True),
+        ("babe", "babyyyy", True),
+        ("babe", "babel fish", False),
+    ],
+)
+def test_first_families_are_fuzzy(family, text, matches):
+    pattern = dict((name, p) for name, p, _ in FIRST_FAMILIES)[family]
+    assert bool(re.search(pattern, text.replace("\u2019", "'"), re.IGNORECASE)) is matches
+
+
+def test_stretched_phrase_counts_as_first(store):
+    person = _load(
+        store,
+        [
+            (0, "alex", "i loooove you"),
+            (0.01, "me", "ilyyy"),
+            (5, "me", "i love you"),
+        ],
+    )
+    ily = next(
+        c
+        for c in mine(store, person, "first", default_tz="UTC")
+        if c.label.endswith('"i love you"')
+    )
+    assert ily.details["text"] == "i loooove you"
+    assert ily.details["match"] == "i loooove you"
+    assert ily.details["count_by_sender"] == {"me": 2, "them": 1}
+    assert ily.details["reply"]["matches"]
 
 
 def test_conflict_needs_a_real_apology(store):
