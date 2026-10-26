@@ -425,3 +425,54 @@ def test_first_only_gates_first_occurrence_and_escaped_quotes_still_match(bean_g
     assert not any(r.get("is_error") for r in results_of(client.requests[1]))
     [insight] = result.report.insights
     assert insight.first is None
+
+
+def test_list_candidates_then_sample_era_through_the_loop(bean_goose, tmp_path):
+    # Live runs never called the miner or era tools; the prompts now steer toward them.
+    script = [
+        message(tool_use("get_overview")),
+        message(tool_use("list_candidates", {"kind": ""})),
+        message(
+            tool_use("sample_era", {"era_id": "era_2", "n": 10, "strategy": "spike_days"}),
+            tool_use("sample_era", {"era_id": "era_3", "n": 10, "strategy": "longest_threads"}),
+        ),
+        message(tool_use("finish", {"summary": "done"})),
+    ]
+    result, client = run(bean_goose, tmp_path, script)
+    assert result.status == "finished"
+
+    [overview] = results_of(client.requests[1])
+    era_ids = [e["id"] for e in json.loads(overview["content"])["eras"]]
+    assert {"era_2", "era_3"} <= set(era_ids)
+
+    [cands] = results_of(client.requests[2])
+    assert not cands.get("is_error")
+    found = json.loads(cands["content"])["candidates"]
+    assert {"first", "pet_name", "conflict"} <= {c["kind"] for c in found}
+    assert any(c["kind"] == "pet_name" and "bean" in c["label"] for c in found)
+    assert all(i.startswith(SID) for c in found for i in c["message_ids"])
+
+    samples = results_of(client.requests[3])
+    assert len(samples) == 2 and not any(r.get("is_error") for r in samples)
+    for r, era in zip(samples, ["era_2", "era_3"], strict=True):
+        body = json.loads(r["content"])
+        assert body["era"]["id"] == era and body["messages"]
+        assert all(m["id"].startswith(SID) for m in body["messages"])
+
+    egress = json.loads((result.run_dir / "egress.json").read_text())
+    tools_used = {e["tool"] for e in egress["entries"]}
+    assert {"list_candidates", "sample_era"} <= tools_used
+
+
+def test_prompts_steer_toward_miners_eras_and_breadth(bean_goose, tmp_path):
+    result, client = run(bean_goose, tmp_path, [message(tool_use("finish", {"summary": "x"}))])
+    req = client.requests[0]
+    system = req["system"][0]["text"]
+    # get_overview, then list_candidates, then sample_era, in that order.
+    order = [system.index(t) for t in ("get_overview", "list_candidates", "sample_era")]
+    assert order == sorted(order)
+    assert "lead to verify" in system and "one insight per storyline" in system
+    assert "near-duplicate" in system
+    assert {"list_candidates", "sample_era"} <= {t["name"] for t in req["tools"]}
+    kickoff = req["messages"][0]["content"]
+    assert "list_candidates" in kickoff and "sample_era" in kickoff
