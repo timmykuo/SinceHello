@@ -480,9 +480,16 @@ Tool design rules:
 - **System prompt sets:** the goal (find warm, specific, *true* insights), the seed
   categories (§8), the rule "every claim must cite message ids, and numbers must come
   from stats or count tools", and the tone guidelines (§12).
-- **Agenda:** the agent works through the seed categories, then has free exploration
-  time for "anything else delightful". It ends with `finish`, or when it hits the turn
-  cap or token budget.
+- **Agenda:** orient with `get_overview`, then call `list_candidates` right away and
+  treat the miner output as leads to verify (`get_context`, `first_occurrence`) rather
+  than guessing search patterns. Read each notable era with `sample_era` before writing
+  story or era insights. Then work through the seed categories and use the remaining
+  time for "anything else delightful". Aim for breadth: one insight per storyline, with
+  no near-duplicates (fold a second angle on the same moment into the existing insight).
+  It ends with `finish`, or when it hits the turn cap or token budget. Why: in the first
+  live runs (synthetic and real) the agent never called `list_candidates` or
+  `sample_era`, found firsts with regex guesses that hold up poorly on noisy history,
+  never read inside the eras, and proposed overlapping insights.
 - **Stopping and guards:**
   - Max turns, e.g. 60.
   - Per-run token budget via `task_budget` (beta) so the agent paces itself, plus a

@@ -1,1 +1,1 @@
-Find the insights for my report about my 1:1 messages with {name} (person {person_id}). Start with get_overview.
+Find the insights for my report about my 1:1 messages with {name} (person {person_id}). Start with get_overview, then list_candidates for leads to verify, and read the notable eras with sample_era before writing about them.
