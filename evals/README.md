@@ -156,3 +156,31 @@ ground truth). See `scenarios/bean-goose.json` for a complete example.
   `at` (a naive datetime in the first sender's local time, or
   `{month, day_range, time}`) and `script` `[[sender, text, gap_seconds?], ...]`.
   See the two scenarios for every type.
+
+# Judge, human ratings, comparison (SPEC §10.2–10.4)
+
+These score a finished run. Paid commands take a hard `--max-cost` (USD). Results go in
+the run's directory under `~/.sincehello/runs/<run>/`, never in this repo.
+
+```sh
+uv run sincehello eval agent --sample bean-goose          # a run: eval.json (recall)
+uv run sincehello eval judge <run> --max-cost 2           # judge.json: scores per insight
+uv run sincehello eval rate <run>                         # ratings.json: your own scores
+uv run sincehello eval agreement <run> [<run> ...]        # judge vs. your ratings (free)
+uv run sincehello eval judge-calibration --max-cost 1     # judge vs. labelled cases
+uv run sincehello eval compare <baseline> <candidate> [--pairwise --max-cost 0.5]
+```
+
+- `judge/`: `judge.md` and `pairwise.md` (the judge's system prompts; keep them free of
+  run-specific text so they cache), `judge.py` (`LLMJudge`), `agreement.py`.
+- `judge_calibration.py`: the critic's invented bean-goose cases plus two more, labelled
+  with `keep` and the scores they should get.
+- `ratings.py`: the `ratings.json` format. `runs.py`: reading a run back (report, the
+  queries behind metrics from `run_log.jsonl`, the store or sample it used).
+
+The judge scores **accuracy, specificity, delight, tone, non_obviousness** (1–5) and
+`keep`. `eval rate` asks for the same five scores in one line (`5 4 4 5 3`) and 👍/👎.
+`judge.json` adds run-level means, `keep_rate` and `hallucination_rate` (share of cards
+with judge accuracy ≤ 2). A run id ending in `-eval-<sample>` is judged against that
+synthetic sample; other runs are judged against your local store, so their excerpts go
+to the API like during `analyze`.

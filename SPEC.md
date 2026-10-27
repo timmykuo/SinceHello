@@ -725,7 +725,7 @@ than fresh input.
 |---|---|---|
 | Discovery agent | `claude-opus-5-5` | Effort tuned via evals |
 | Critic | `claude-opus-5-5`, effort `medium` | Starts on the strongest model to set the quality bar. Later, eval `claude-sonnet-5-5`/`claude-haiku-5-5` as the critic, and switch only if agreement with the Opus critic and with human ratings holds |
-| LLM judge (evals only) | `claude-opus-5-5` | Batch API for eval runs (50% cheaper) |
+| LLM judge (evals only) | `claude-opus-5-5`, effort `medium` | Streaming calls under a hard `--max-cost` for now; the Batch API (50% cheaper) is a later option (§10.2) |
 
 **Critic call (estimate, not yet measured live):** a ~1.6k-token cached system prompt
 (written once at $5/M, then read at $0.20/M), ~1–2k fresh input tokens (the card plus
@@ -777,12 +777,43 @@ partial report once the projected spend crosses it. The cost-per-run is recorded
 ### 10.2 LLM-as-judge
 
 - A rubric score from 1–5 on accuracy, specificity, delight, tone, and
-  non-obviousness, run on every insight in a report.
+  non-obviousness, run on every insight in a report, plus `keep` (would the reader want
+  this card in their deck?), the judge's side of the human 👍/👎 (§10.3).
 - The judge is a **separate prompt and rubric from the pipeline critic** (§7.6). That
   way the eval doesn't share the critic's blind spots and doesn't just grade the
   pipeline against itself.
 - Pairwise mode for comparing two pipeline versions: "which deck is better?",
   with the order randomized.
+
+Implementation notes (`evals/judge/`, M6):
+
+- **Prompts:** `judge.md` (per insight, ~1.4k tokens) and `pairwise.md` are each the
+  whole system prompt of their mode, byte-stable, with the cache breakpoint on the
+  system block and everything per-item in the one user message. The rubric anchors every
+  level of every dimension and ties `keep` to accuracy ≥ 4. `prompt_version()` (a hash of
+  both) is recorded with results; `eval compare` warns when two runs were judged with
+  different prompts.
+- **Input:** the same evidence the critic reads (the card, every cited message with 5
+  messages each side, `local_time` and `sender`), shown through `ToolContext.show` under
+  egress tool `judge`, and the metric with the query behind it. It never sees the
+  insight's id, the critic's verdict or its scores. After a run the query definitions
+  come from `report.stats` (stats) and the run log's `tool` events (counts, firsts); an
+  unrecorded query is shown as "unknown query". Eval runs on a synthetic sample (an
+  `-eval-<sample>` run id) re-ingest the sample into a throwaway store; other runs read
+  the local store.
+- **Output:** structured outputs, `{notes, scores, keep}` (notes first) or `{reasons,
+  winner}`, re-validated client-side; malformed output is retried once.
+- **Pairwise:** cards only (title, headline, body, quotes), no excerpts. The deck is the
+  curated `deck`, or before curation every critic-`pass` insight. A seeded or random
+  coin picks which run is `deck_1`; the result records which was shown first.
+- **Model and cost:** `claude-opus-5-5`, effort `medium`, adaptive thinking, fallbacks,
+  like the critic; about the same per call (~$0.02–0.04). Calls go through the same
+  `Budget` as the critic (one-shot calls guarded by their own estimate), so every
+  paid eval command has a hard `--max-cost`. The Batch API (§9) would halve this but
+  can't stop between calls at a cap; it's the next step if eval spend matters.
+- **Run-level numbers** (`judge.json`): per-dimension means and their average
+  (`overall`), `keep_rate`, and `hallucination_rate`: the share of cards the judge
+  scored accuracy ≤ 2, the §10.1 metric for runs without planted ground truth.
 
 ### 10.3 Human ratings (real data, you)
 
@@ -791,12 +822,40 @@ partial report once the projected spend crosses it. The cost-per-run is recorded
 - Ratings are stored locally. They're used to **calibrate the judge** (agreement
   rate between judge and human; refine the rubric until agreement is acceptable).
 
+Implementation notes (M6):
+
+- `sincehello eval rate <run>` shows each card (the deck in order, or every insight
+  before curation or with `--all`) with its quotes, but not the critic's verdict or
+  scores. It takes the five judge dimensions in one line (`5 4 4 5 3` or `54453`), then
+  👍/👎 and an optional note. `s` skips, `q` quits; it saves after every card and resumes
+  where it stopped (`--redo` asks again).
+- Ratings go to `~/.sincehello/runs/<run>/ratings.json`, never the repo (`evals/ratings.py`).
+- **Agreement** (`evals/judge/agreement.py`): per dimension, exact, within-one, mean
+  absolute difference and bias (judge minus reference); `keep` agreement. Only pairs
+  where both sides have a value count. `sincehello eval agreement <run>...` pools runs;
+  no API calls.
+- **Labelled calibration set** (`evals/judge_calibration.py`): the critic's 11 invented
+  bean-goose cases plus an accurate-but-obvious card and a mean one, each labelled with
+  `keep` and the scores a careful reader would give (only the dimensions that aren't
+  debatable). `sincehello eval judge-calibration --max-cost 1` scores each once and
+  reports agreement. Target, to refine the rubric against: `keep` agreement and
+  within-one accuracy ≥ 0.8.
+
 ### 10.4 Iteration workflow
 
 Change a prompt, tool, or effort setting → run the synthetic suite → compare against the
 baseline on recall, hallucination rate, judge score, and cost → spot-check real data
-with human rating → keep or revert. Every run's config and results are versioned in
-`evals/runs/`.
+with human rating → keep or revert.
+
+In commands: `sincehello eval agent` (recall, `eval.json`) → `sincehello eval judge
+<run>` (`judge.json`) → `sincehello eval compare <baseline> <candidate> [--pairwise]`,
+which prints both runs side by side (model/effort, status, cost, turns, insights and
+critic passes, recall, judge overall / keep / hallucination, human keep rate) and
+optionally asks the pairwise judge (`pairwise-vs-<baseline>.json` in the candidate's
+run dir). Every run's config and results stay in its run directory under
+`~/.sincehello/runs/` (run config in `report.json` `run` and the run log's
+`request_static`, the judge's model and prompt version in `judge.json`), not in the
+repo, since real runs hold message excerpts.
 
 ---
 
@@ -814,12 +873,16 @@ sincehello analyze <person> [--max-cost 5] [--deck-size 20]
                                    # (--model, --effort, --max-turns; no sync yet)
 sincehello curate <run-dir> [--deck-size 20]  # re-curate a run's report.json (§7.7)
 sincehello report <run-id>         # print report.md
-sincehello rate <run-id>           # human rating pass
 sincehello eval [--suite synthetic]
 sincehello eval agent --sample bean-goose   # M4 hook: agent recall of planted facts
 sincehello eval critic [--max-cost 0.5]     # M5: critic agreement with labelled insights
                                    # analyze / eval agent run the critic by default;
                                    # --no-critic, --critic-model, --critic-effort
+sincehello eval judge <run> [--max-cost 2]    # M6: LLM judge scores every insight
+sincehello eval rate <run> [--all]          # M6: human rating pass (ratings.json)
+sincehello eval agreement <run>...          # M6: judge vs. your ratings, no API calls
+sincehello eval judge-calibration [--max-cost 1]  # M6: judge vs. labelled insights
+sincehello eval compare <a> <b> [--pairwise]      # M6: two runs side by side
 ```
 
 The later TypeScript UI is a front end for these same commands and the
@@ -862,8 +925,8 @@ sincehello/
 evals/
   scenarios/       synthetic scenario specs with planted facts
   generator/       synthetic history generation
-  judge/           rubric + judge
-  runs/            versioned results
+  judge/           judge.md, pairwise.md, judge.py, agreement.py
+  judge_calibration.py, ratings.py, runs.py
 tests/
 web/               (later) TypeScript UI
 ```
@@ -887,6 +950,9 @@ is pure Python; see §7.2 for why not `ruptures`).
 6. **M6 — Curation plus final report;** human rater; LLM judge calibrated against my ratings.
    Curation is done (§7.7): dedupe, score, category spread and Wrapped ordering fill
    `report.json` `deck` on every run; `sincehello curate` re-curates a run.
+   *Eval side built:* judge (per insight and pairwise), `eval rate`, agreement against
+   ratings and a labelled set, `eval compare`. *Still to do:* rate real runs and tune
+   `judge.md` until agreement holds (§10.3).
 7. **M7 — Timezone inference:** sleep-window shift detection, agent naming, confirm
    flow, cross-timezone insights. Synthetic scenarios get a planted long-distance era.
 8. **M8 — Iterate:** tune prompts, effort, and tools against the evals.

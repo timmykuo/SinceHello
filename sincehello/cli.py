@@ -441,6 +441,247 @@ def eval_critic(
     typer.echo(f"results: {path}")
 
 
+# --- M6 eval harness: LLM judge, human ratings, calibration, comparison (SPEC.md §10.2-10.4)
+
+JudgeModel = Annotated[str, typer.Option(help="Model for the eval judge.")]
+JudgeEffort = Annotated[str, typer.Option(help="Judge effort: low | medium | high | ...")]
+
+
+def _judge(max_cost: float, model: str, effort: str, log=None):
+    from evals.judge import JudgeConfig, LLMJudge
+    from sincehello.agent.budget import Budget
+
+    _check_effort(effort)
+    return LLMJudge(
+        _anthropic_client(), Budget(max_cost), JudgeConfig(model=model, effort=effort), log
+    )
+
+
+def _run_dir(run: str) -> Path:
+    from evals import runs
+
+    try:
+        return runs.resolve(run)
+    except runs.RunError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+
+
+def _scores(s: dict | None) -> str:
+    return " ".join(f"{k[:4]} {v}" for k, v in (s or {}).items())
+
+
+@eval_app.command("judge")
+def eval_judge(
+    run: Annotated[str, typer.Argument(help="Run id (under ~/.sincehello/runs/) or run dir.")],
+    sample: Annotated[
+        str | None,
+        typer.Option(help="Synthetic sample the run used (default: from an -eval-<sample> id)."),
+    ] = None,
+    max_cost: Annotated[float, typer.Option(help="Hard spending cap, USD.")] = 2.0,
+    judge_model: JudgeModel = "claude-opus-5-5",
+    judge_effort: JudgeEffort = "medium",
+) -> None:
+    """Score every insight in a run with the LLM judge. Writes <run>/judge.json."""
+    from evals import runs
+    from evals.judge.judge import judge_insights
+
+    run_dir = _run_dir(run)
+    report = runs.load_report(run_dir)
+    with runs.event_log(run_dir / "judge_log.jsonl") as log:
+        judge = _judge(max_cost, judge_model, judge_effort, log)
+        try:
+            with runs.context(run_dir, report, sample) as ctx:
+                out = judge_insights(judge, report.insights, ctx, runs.queries(run_dir, report))
+        except runs.RunError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+    out["run_id"] = run_dir.name
+    (run_dir / "judge.json").write_text(json.dumps(out, indent=2, ensure_ascii=False))
+    for r in out["insights"]:
+        mark = {True: "+", False: "-"}.get(r["keep"], "?")
+        shown = _scores(r["scores"]) if r["scores"] else f"none ({r['error']})"
+        typer.echo(f"  [{mark}] {r['insight']:<10} {r['critic']:<8} {shown}  {r['title']}")
+    m = out["means"] or {}
+    typer.echo(
+        f"judged {out['scored']}/{len(out['insights'])}: overall {m.get('overall')},"
+        f" keep {out['keep_rate']}, hallucination {out['hallucination_rate']};"
+        f" {out['calls']} calls, ${out['cost_usd']:.4f},"
+        f" {out['egress']['messages_shown']} messages shown"
+    )
+    typer.echo(f"results: {run_dir / 'judge.json'}")
+
+
+@eval_app.command("rate")
+def eval_rate(
+    run: Annotated[str, typer.Argument(help="Run id (under ~/.sincehello/runs/) or run dir.")],
+    everything: Annotated[
+        bool, typer.Option("--all", help="Rate every insight, not only the deck.")
+    ] = False,
+    redo: Annotated[bool, typer.Option(help="Ask again for cards already rated.")] = False,
+) -> None:
+    """Rate a run's insights yourself (SPEC.md §10.3). Saves to <run>/ratings.json."""
+    from evals import ratings, runs
+    from evals.judge import DIMENSIONS
+
+    run_dir = _run_dir(run)
+    report = runs.load_report(run_dir)
+    done = ratings.load(run_dir)
+    todo = [i for i in ratings.to_rate(report, everything) if redo or i.id not in done]
+    typer.echo(
+        f"{len(todo)} to rate, {len(done)} already rated. Scores 1-5 for:"
+        f" {', '.join(DIMENSIONS)} (e.g. 5 4 4 5 3). s skips, q quits."
+    )
+    for n, ins in enumerate(todo, 1):
+        typer.echo(f"\n[{n}/{len(todo)}] {ins.id}  {ins.category}/{ins.kind}")
+        typer.echo(f"  {ins.title}\n  {ins.headline}")
+        if ins.body:
+            typer.echo(f"  {ins.body}")
+        for ev in ins.evidence:
+            typer.echo(f'    > "{ev.quote}"  ({ev.message_id})')
+        while True:
+            answer = typer.prompt("scores").strip().lower()
+            if answer in ("s", "q"):
+                break
+            try:
+                scores = ratings.parse_scores(answer)
+                break
+            except ValueError as e:
+                typer.echo(str(e))
+        if answer == "q":
+            break
+        if answer == "s":
+            continue
+        keep = typer.confirm("would you want to see this?")
+        note = typer.prompt("note", default="", show_default=False)
+        done[ins.id] = ratings.Rating(scores=scores, keep=keep, note=note)
+        ratings.save(run_dir, done)
+    typer.echo(f"\n{len(done)} rated -> {ratings.path(run_dir)}")
+
+
+@eval_app.command("agreement")
+def eval_agreement(
+    run_ids: Annotated[list[str], typer.Argument(help="Runs with judge.json and ratings.json.")],
+) -> None:
+    """Agreement between the judge and your ratings, pooled over runs (no API calls)."""
+    from evals import ratings, runs
+    from evals.judge.agreement import agreement
+
+    judged: dict[str, dict] = {}
+    human: dict[str, dict] = {}
+    for run in run_ids:
+        run_dir = _run_dir(run)
+        jd = runs.read_json(run_dir, "judge.json")
+        if jd is None:
+            typer.echo(f"{run_dir.name}: no judge.json (run `sincehello eval judge`)", err=True)
+            raise typer.Exit(1)
+        for r in jd["insights"]:
+            judged[f"{run_dir.name}/{r['insight']}"] = r
+        for k, v in ratings.as_rows(ratings.load(run_dir)).items():
+            human[f"{run_dir.name}/{k}"] = v
+    out = agreement(judged, human)
+    _print_agreement(out)
+
+
+def _print_agreement(out: dict) -> None:
+    typer.echo(f"{out['n']} insights scored by both")
+    for d, v in out["dimensions"].items():
+        typer.echo(
+            f"  {d:<16} n {v['n']:>3}  exact {v['exact']:.0%}  within 1 {v['within_1']:.0%}"
+            f"  mae {v['mae']}  bias {v['bias']:+}"
+        )
+    k = out["keep"]
+    typer.echo(f"  keep             n {k['n']:>3}  agreement {k['agreement']}")
+
+
+@eval_app.command("judge-calibration")
+def eval_judge_calibration(
+    max_cost: Annotated[float, typer.Option(help="Hard spending cap, USD.")] = 1.0,
+    judge_model: JudgeModel = "claude-opus-5-5",
+    judge_effort: JudgeEffort = "medium",
+) -> None:
+    """Run the judge on hand-labelled insights about bean-goose; report agreement."""
+    from datetime import UTC, datetime
+
+    from evals import judge_calibration, runs
+
+    stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
+    base = config.home() / "evals"
+    with runs.event_log(base / f"judge-calibration-{stamp}.jsonl") as log:
+        out = judge_calibration.run(_judge(max_cost, judge_model, judge_effort, log))
+    path = base / f"judge-calibration-{stamp}.json"
+    path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
+    for r in out["insights"]:
+        label = judge_calibration.LABELS[r["insight"].removeprefix("cal_")]
+        got = _scores(r["scores"]) if r["scores"] else f"none ({r['error']})"
+        typer.echo(f"  {r['insight']:<26} keep {r['keep']!s:<5} (label {label.keep!s:<5}) {got}")
+    _print_agreement(out["agreement"])
+    typer.echo(f"{out['calls']} calls, ${out['cost_usd']:.4f}; results: {path}")
+
+
+@eval_app.command("compare")
+def eval_compare(
+    run_a: Annotated[str, typer.Argument(help="Baseline run.")],
+    run_b: Annotated[str, typer.Argument(help="Candidate run.")],
+    pairwise: Annotated[
+        bool, typer.Option(help="Also ask the judge which deck is better (costs money).")
+    ] = False,
+    max_cost: Annotated[float, typer.Option(help="Hard spending cap for --pairwise, USD.")] = 0.5,
+    seed: Annotated[int | None, typer.Option(help="Seed for the deck order.")] = None,
+    judge_model: JudgeModel = "claude-opus-5-5",
+    judge_effort: JudgeEffort = "medium",
+) -> None:
+    """Two runs side by side: recall, judge scores, ratings, cost (SPEC.md §10.4)."""
+    import random
+
+    from evals import runs
+    from evals.judge import JudgeUnavailable
+
+    a_dir, b_dir = _run_dir(run_a), _run_dir(run_b)
+    a, b = runs.summary(a_dir), runs.summary(b_dir)
+    rows = [
+        ("model / effort", lambda s: f"{s['model']} / {s['effort']}"),
+        ("status", lambda s: s["status"]),
+        ("cost", lambda s: f"${s['cost_usd']:.4f}"),
+        ("turns", lambda s: s["turns"]),
+        ("insights / pass", lambda s: f"{s['insights']} / {s['critic_pass']}"),
+        ("recall", lambda s: s.get("recall")),
+        ("judge overall", lambda s: (s.get("judge") or {}).get("overall")),
+        ("judge keep", lambda s: (s.get("judge") or {}).get("keep_rate")),
+        ("hallucination", lambda s: (s.get("judge") or {}).get("hallucination_rate")),
+        ("human keep", lambda s: (s.get("human") or {}).get("keep_rate")),
+    ]
+    typer.echo(f"{'':<18} {'A ' + a['run_id']:<40} B {b['run_id']}")
+    for name, get in rows:
+        typer.echo(f"{name:<18} {get(a)!s:<40} {get(b)!s}")
+    va, vb = (
+        (a.get("judge") or {}).get("prompt_version"),
+        (b.get("judge") or {}).get("prompt_version"),
+    )
+    if va and vb and va != vb:
+        typer.echo("note: judged with different judge prompts; scores aren't comparable", err=True)
+    if not pairwise:
+        return
+    ra, rb = runs.load_report(a_dir), runs.load_report(b_dir)
+    if ra.person.get("name") != rb.person.get("name"):
+        typer.echo("note: the runs are about different people", err=True)
+    with runs.event_log(b_dir / "judge_log.jsonl") as log:
+        judge = _judge(max_cost, judge_model, judge_effort, log)
+        who = {"me": None, "them": rb.person.get("name")}
+        try:
+            res = judge.compare(who, runs.deck(ra), runs.deck(rb), random.Random(seed))
+        except JudgeUnavailable as e:
+            typer.echo(f"pairwise: no result ({e})", err=True)
+            raise typer.Exit(1) from None
+    out = {"a": a_dir.name, "b": b_dir.name, **res.to_dict(), "cost_usd": judge.budget.spent}
+    path = b_dir / f"pairwise-vs-{a_dir.name}.json"
+    path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
+    winner = {"a": f"A ({a_dir.name})", "b": f"B ({b_dir.name})", "tie": "tie"}[res.winner]
+    typer.echo(f"pairwise: {winner}, A shown {'first' if res.shown_first == 'a' else 'second'}")
+    typer.echo(f"  {res.reasons}")
+    typer.echo(f"${judge.budget.spent:.4f}; results: {path}")
+
+
 def _print_deck(report) -> None:
     by_id = {i.id: i for i in report.insights}
     cur = report.curation
