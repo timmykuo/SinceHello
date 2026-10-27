@@ -107,6 +107,7 @@ class RunRecorder:
             eras=[e.to_dict() for e in eras],
             stats=stats,
             summary=ctx.summary,
+            timezones=ctx.timezones(),
             run=RunInfo(
                 run_id=self.run_id,
                 status=status,

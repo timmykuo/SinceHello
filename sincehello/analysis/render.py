@@ -122,7 +122,7 @@ def render(results: dict[str, StatResult], name: str) -> list[str]:
             add(
                 "Cross-timezone",
                 f"{w['start_date']} to {w['end_date']}: them {w['them_tz']}"
-                f" ({w['them_ahead_hours']:+g}h)",
+                f" ({w['them_ahead_hours']:+g}h){' inferred' if w['inferred'] else ''}",
                 "cross_timezone",
             )
     return lines

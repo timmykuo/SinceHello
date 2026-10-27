@@ -160,6 +160,251 @@ def candidates(
         typer.echo(f"{c.score:.2f}  {c.kind:<9} {c.label}  [messages {ids}]")
 
 
+tz_app = typer.Typer(help="Timezone periods per person: inferred, then confirmed (SPEC.md §6.1).")
+app.add_typer(tz_app, name="tz")
+
+TzOption = Annotated[str | None, typer.Option(help="Timezone for people with no tz periods.")]
+
+
+def _person_name(store: Store, person_id: int) -> str:
+    for p in store.people():
+        if p.person_id == person_id:
+            return p.display_name or (p.handles[0] if p.handles else f"person {person_id}")
+    typer.echo(f"unknown person {person_id} (see `sincehello people`)", err=True)
+    raise typer.Exit(1)
+
+
+def _local(ms: int, tz: str):
+    from datetime import UTC, datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.fromtimestamp(ms / 1000, UTC).astimezone(ZoneInfo(tz))
+
+
+def _day(ms: int, tz: str) -> str:
+    d = _local(ms, tz)
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+def _describe(store: Store, sg, name: str, tz: str) -> str:
+    """One suggestion as a question, e.g. "Looks like Alex was about 14h ahead of you..."."""
+    from sincehello.analysis.tz import TzResolver
+    from sincehello.analysis.tz_infer import midpoint_ms, offset_label
+    from sincehello.store.store import ME_PERSON_ID
+
+    mine = sg.person_id == ME_PERSON_ID
+    mid = midpoint_ms(sg)
+    # Their offset is compared with yours then; yours with the default zone (your usual).
+    ref = (
+        _local(mid, tz)
+        if mine
+        else TzResolver(store, tz, use_inferred=False).local(ME_PERSON_ID, mid)
+    )
+    diff = sg.utc_offset_hours - ref.utcoffset().total_seconds() / 3600
+    way = "ahead of" if diff > 0 else "behind"
+    who, whom = ("you were", "usual") if mine else (f"{name} was", "you")
+    if sg.kind == "home":
+        lead = f"Looks like {name} lives about {abs(diff):g}h {way} you"
+        when = f"(since {_day(sg.start_utc, tz)})"
+    else:
+        lead = f"Looks like {who} about {abs(diff):g}h {way} {whom}"
+        until = f"to {_day(sg.end_utc, tz)}" if sg.end_utc is not None else "onwards"
+        when = f"from {_day(sg.start_utc, tz)} {until}"
+    text = f"{lead} {when}, {offset_label(sg.utc_offset_hours)}"
+    if sg.hint_message_id:
+        source, _, msg_id = sg.hint_message_id.partition(":")
+        row = store.conn.execute(
+            "SELECT is_from_me, sent_at_utc FROM message WHERE source = ? AND source_msg_id = ?",
+            (source, msg_id),
+        ).fetchone()
+        if row is not None:
+            speaker = "you" if row["is_from_me"] else name
+            text += (
+                f" ({speaker} said \u201c{sg.hint_quote}\u201d on {_day(row['sent_at_utc'], tz)})"
+            )
+    zone = f"{sg.iana_tz} ({sg.place})" if sg.place else sg.iana_tz
+    return f"{text}.\n  Suggested zone: {zone}. Confidence: {sg.confidence}."
+
+
+def _print_timeline(store: Store, person_id: int, name: str, tz: str) -> None:
+    from sincehello.analysis.tz import TzResolver
+    from sincehello.store.store import ME_PERSON_ID
+
+    resolver = TzResolver(store, tz)
+    for pid, label in ((ME_PERSON_ID, "you"), (person_id, name)):
+        periods = resolver.timeline(pid)
+        typer.echo(f"{label}: {tz} by default" + (", plus:" if periods else ""))
+        for p in periods:
+            end = p["end_utc"][:10] if p["end_utc"] else "open"
+            typer.echo(f"  {p['start_utc'][:10]} -> {end:<10}  {p['tz']:<22} {p['source']}")
+
+
+@tz_app.command("show")
+def tz_show(
+    person_id: Annotated[int, typer.Argument(help="Person id, from `sincehello people`.")],
+    tz: TzOption = None,
+) -> None:
+    """Your and their timezone periods, and suggestions waiting for an answer."""
+    from sincehello.analysis.tz_infer import pending_suggestions
+
+    tz = tz or config.default_timezone()
+    with Store(config.store_path()) as store:
+        name = _person_name(store, person_id)
+        _print_timeline(store, person_id, name, tz)
+        pending = pending_suggestions(store, person_id)
+        if pending:
+            typer.echo(f"\n{len(pending)} suggestions waiting (sincehello tz confirm {person_id}):")
+        for sg in pending:
+            typer.echo(f"  [{sg.id}] {_describe(store, sg, name, tz)}")
+
+
+@tz_app.command("infer")
+def tz_infer_cmd(
+    person_id: Annotated[int, typer.Argument(help="Person id, from `sincehello people`.")],
+    tz: TzOption = None,
+    name: Annotated[
+        bool, typer.Option("--name/--no-name", help="Ask Claude to name each place (costs money).")
+    ] = False,
+    max_cost: Annotated[float, typer.Option(help="Hard spending cap for --name, USD.")] = 0.25,
+    model: Annotated[str, typer.Option(help="Model for --name.")] = "claude-opus-5-5",
+    as_json: Annotated[bool, typer.Option("--json", help="Print JSON.")] = False,
+) -> None:
+    """Find timezone shifts from sleep windows (local), optionally name them (Claude)."""
+    from sincehello.analysis import tz_infer
+
+    tz = tz or config.default_timezone()
+    with Store(config.store_path()) as store:
+        who = _person_name(store, person_id)
+        pending = tz_infer.sync(store, person_id, default_tz=tz)
+        if name and pending:
+            _name_suggestions(store, person_id, pending, max_cost, model)
+            pending = tz_infer.pending_suggestions(store, person_id)
+        if as_json:
+            out = {"person_id": person_id, "suggestions": [sg.to_dict() for sg in pending]}
+            typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
+            return
+        if not pending:
+            typer.echo("No timezone shifts to suggest.")
+        for sg in pending:
+            typer.echo(f"[{sg.id}] {_describe(store, sg, who, tz)}")
+        if pending:
+            typer.echo(f"Review them with `sincehello tz confirm {person_id}`.")
+
+
+def _name_suggestions(store: Store, person_id: int, pending, max_cost: float, model: str) -> None:
+    from datetime import UTC, datetime
+
+    from sincehello.agent.budget import Budget
+    from sincehello.agent.context import ToolContext
+    from sincehello.agent.tz_namer import NamerConfig, NameUnavailable, TzNamer
+
+    budget = Budget(max_cost)
+    namer = TzNamer(_anthropic_client(), budget, NamerConfig(model=model))
+    ctx = ToolContext(store, person_id)
+    for sg in pending:
+        if sg.place is not None:
+            continue
+        try:
+            got = namer(sg, ctx)
+        except NameUnavailable as e:
+            typer.echo(f"[{sg.id}] not named: {e}", err=True)
+            continue
+        for why in got.dropped:
+            typer.echo(f"[{sg.id}] dropped: {why}", err=True)
+        if got.iana_tz is None:
+            typer.echo(f"[{sg.id}] no place found ({got.notes})", err=True)
+            continue
+        fields = {"place": got.place, "iana_tz": got.iana_tz}
+        if got.evidence_message_id:
+            fields |= {"hint_message_id": got.evidence_message_id, "hint_quote": got.quote}
+        store.update_tz_suggestion(sg.id, **fields)
+    egress = ctx.egress.summary(len(ctx.messages))
+    path = config.home() / "tz" / f"name-{person_id}-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**egress, "entries": ctx.egress.entries}, indent=2))
+    typer.echo(
+        f"naming: {budget.critic_calls} calls, ${budget.spent:.4f},"
+        f" {egress['messages_shared']} messages shared ({path})",
+        err=True,
+    )
+
+
+def _parse_local(text: str, tz: str) -> int | None:
+    """ "open" -> None; "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" in `tz` -> UTC ms."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    text = text.strip()
+    if text.lower() in ("open", "none", ""):
+        return None
+    dt = datetime.fromisoformat(text).replace(tzinfo=ZoneInfo(tz))
+    return int(dt.timestamp() * 1000)
+
+
+@tz_app.command("confirm")
+def tz_confirm(
+    person_id: Annotated[int, typer.Argument(help="Person id, from `sincehello people`.")],
+    tz: TzOption = None,
+    everything: Annotated[
+        bool, typer.Option("--all", help="Also ask about low-confidence suggestions.")
+    ] = False,
+) -> None:
+    """Accept, edit or ignore each inferred period. Accepted ones go to tz_period."""
+    from zoneinfo import ZoneInfoNotFoundError
+
+    from sincehello.analysis import tz_infer
+
+    tz = tz or config.default_timezone()
+    with Store(config.store_path()) as store:
+        who = _person_name(store, person_id)
+        pending = tz_infer.sync(store, person_id, default_tz=tz)
+        ask = [sg for sg in pending if everything or sg.confidence != "low"]
+        if not ask:
+            low = len(pending) - len(ask)
+            extra = f" ({low} low-confidence; --all to see them)" if low else ""
+            typer.echo(f"Nothing to confirm{extra}.")
+            return
+        for n, sg in enumerate(ask, 1):
+            typer.echo(f"\n[{n}/{len(ask)}] {_describe(store, sg, who, tz)}")
+            while True:
+                answer = typer.prompt("correct, edit, ignore, skip or quit? [c/e/i/s/q]").strip()
+                answer = answer.lower()[:1]
+                if answer in ("c", "e", "i", "s", "q"):
+                    break
+            if answer == "q":
+                break
+            if answer == "s":
+                continue
+            if answer == "i":
+                tz_infer.ignore(store, sg)
+                typer.echo("Ignored.")
+                continue
+            if answer == "c":
+                tz_infer.accept(store, sg)
+                typer.echo(f"Saved: {sg.iana_tz}.")
+                continue
+            fmt = "%Y-%m-%d %H:%M"
+            end_default = _local(sg.end_utc, tz).strftime(fmt) if sg.end_utc is not None else "open"
+            while True:
+                zone = typer.prompt("zone (IANA, e.g. Asia/Tokyo)", default=sg.iana_tz)
+                start = typer.prompt(
+                    f"start ({tz})", default=_local(sg.start_utc, tz).strftime(fmt)
+                )
+                end = typer.prompt(f"end ({tz}, or open)", default=end_default)
+                try:
+                    start_ms = _parse_local(start, tz)
+                    if start_ms is None:
+                        raise ValueError("a period needs a start")
+                    tz_infer.accept(
+                        store, sg, iana_tz=zone, start_utc=start_ms, end_utc=_parse_local(end, tz)
+                    )
+                except (ValueError, ZoneInfoNotFoundError) as e:
+                    typer.echo(f"Can't save that: {e}")
+                    continue
+                typer.echo(f"Saved: {zone}.")
+                break
+
+
 synth = typer.Typer(help="Synthetic histories with planted facts for evals (SPEC.md §10.1).")
 app.add_typer(synth, name="synth")
 
@@ -320,11 +565,28 @@ def analyze(
         if person_id not in {p.person_id for p in store.people()}:
             typer.echo(f"unknown person {person_id} (see `sincehello people`)", err=True)
             raise typer.Exit(1)
+        _tz_note(store, person_id, tz)
         run_dir = runs_dir() / new_run_id(person_id)
         client = _anthropic_client()
         reviewer = _critic(critic, client, critic_model, critic_effort)
         result = run_agent(store, person_id, client, config_, run_dir, critic=reviewer)
     _print_run(result)
+
+
+def _tz_note(store: Store, person_id: int, tz: str | None) -> None:
+    """Refresh timezone suggestions (local, no LLM) and say if any wait for the user."""
+    from sincehello.analysis import tz_infer
+
+    pending = tz_infer.sync(store, person_id, default_tz=tz)
+    asked = [sg for sg in pending if sg.confidence != "low"]
+    if not asked:
+        return
+    used = sum(sg.confidence == "high" for sg in asked)
+    typer.echo(
+        f"timezones: {len(asked)} inferred periods to review (`sincehello tz confirm"
+        f" {person_id}`); {used} high-confidence ones are used, labeled inferred, until then.",
+        err=True,
+    )
 
 
 eval_app = typer.Typer(help="Evals (SPEC.md §10). These call Claude and cost money.")
@@ -373,6 +635,62 @@ def eval_agent(
         mark = "x" if f["found"] else " "
         typer.echo(f"  [{mark}] {f['id']:<16} {f['type']:<16} {', '.join(f['insights'])}")
     typer.echo(f"recall {scored['found']}/{scored['total']} ({scored['recall']:.0%})")
+
+
+@eval_app.command("tz")
+def eval_tz(
+    sample: Annotated[str | None, typer.Option(help="Sample under evals/samples/.")] = None,
+    scenario: Annotated[
+        str | None, typer.Option(help="Generate this scenario instead of using a sample.")
+    ] = None,
+    seed: Annotated[
+        list[int] | None, typer.Option(help="Seeds for --scenario (repeatable).")
+    ] = None,
+    messages: Annotated[int | None, typer.Option(help="Lines per generated history.")] = None,
+) -> None:
+    """Recall of planted timezone periods by inference (SPEC.md §6.1). Free, no API calls."""
+    import tempfile
+
+    from evals import generator, tz_recall
+    from sincehello.connectors.synthetic import SAMPLE_DIR
+
+    results = []
+    if scenario is None:
+        path = SAMPLE_DIR.parent / (sample or "bean-goose")
+        if not (path / "manifest.json").is_file():
+            typer.echo(f"no sample {sample!r} in {SAMPLE_DIR.parent}", err=True)
+            raise typer.Exit(1)
+        results.append(tz_recall.run(path))
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            for n in seed or [0]:
+                records, manifest = generator.generate(scenario, n, messages)
+                out = Path(tmp) / manifest["history_id"]
+                generator.write(out, records, manifest)
+                results.append(tz_recall.run(out))
+    found = total = 0
+    for r in results:
+        found, total = found + r["found"], total + r["total"]
+        typer.echo(f"{r['history_id']}: {r['found']}/{r['total']}")
+        for e in r["expected"]:
+            mark = "x" if e["found"] else " "
+            end = e["end_error_days"]
+            detail = (
+                f"start {e['start_error_days']:+g}d end {'open' if end is None else f'{end:+g}d'}"
+                f" offset {e['offset']:+g} ({e['confidence']})"
+                if e["found"]
+                else ""
+            )
+            typer.echo(f"  [{mark}] {e['who']:<4} {e['tz']:<20} {e['start'][:10]}  {detail}")
+        for t in r["trap_hits"]:
+            typer.echo(f"  trap suggested: {t['who']} {t['tz']} {t['start'][:10]}")
+        for fp in r["false_positives"]:
+            typer.echo(
+                f"  false positive: person {fp['person_id']} {fp['start'][:10]}"
+                f" {fp['utc_offset_hours']:+g} ({fp['confidence']})"
+            )
+    if total:
+        typer.echo(f"recall {found}/{total} ({found / total:.0%})")
 
 
 @app.command()

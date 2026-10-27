@@ -340,6 +340,35 @@ def test_cross_timezone(store):
     ]
     assert w["sent_during_recipient_night"] == {"me": 1, "them": 0}
     assert w["night_reply_wait_hours_median"] == {"me": 7.0, "them": None}
+    assert w["sources"] == {"me": "default", "them": "user"} and w["inferred"] is False
+    # The reunion: the first message after the window, Alex's "e" from back home.
+    reunion = w["reunion_message_id"].split(":", 1)[1]
+    row = store.conn.execute("SELECT text FROM message WHERE source_msg_id = ?", (reunion,))
+    assert row.fetchone()["text"] == "e"
+    assert r.value["zones"] == {
+        "me": [{"tz": "America/New_York", "messages": 1}],
+        "them": [{"tz": "America/New_York", "messages": 2}, {"tz": "Asia/Tokyo", "messages": 2}],
+    }
+
+
+def test_cross_timezone_marks_unconfirmed_periods(store):
+    person = tokyo_fixture(store)
+    store.conn.execute("DELETE FROM tz_period WHERE source = 'user'")
+    start, end = (int(at(2022, *d).timestamp() * 1000) for d in ((6, 1), (9, 1)))
+    store.add_tz_suggestion(
+        person,
+        kind="shift",
+        start_utc=start,
+        end_utc=end,
+        utc_offset_hours=9.0,
+        iana_tz="Asia/Tokyo",
+        confidence="high",
+        score=0.9,
+    )
+    r = compute(store, person, "cross_timezone", {"default_tz": "America/New_York"})
+    (w,) = r.value["windows"]
+    assert w["sources"]["them"] == "inferred" and w["inferred"] is True
+    assert "inferred_timezones" in r.flags
 
 
 def test_cross_timezone_needs_four_weeks(store):

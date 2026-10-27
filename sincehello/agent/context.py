@@ -214,6 +214,12 @@ class ToolContext:
         hi = len(self.messages) if end_utc is None else bisect_left(self._times, end_utc)
         return self.messages[lo:hi]
 
+    def timezones(self) -> dict[str, list[dict[str, Any]]]:
+        """Each person's timezone periods beyond the default (SPEC.md §6.1), with their
+        source ("inferred" = unconfirmed); empty when nobody has any."""
+        out = {"me": self.tz.timeline(ME_PERSON_ID), "them": self.tz.timeline(self.person_id)}
+        return out if any(out.values()) else {}
+
     def local_time(self, m: Message) -> datetime:
         person = ME_PERSON_ID if m.sender == "me" else self.person_id
         return self.tz.local(person, m.sent_at_utc)

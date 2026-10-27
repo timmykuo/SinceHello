@@ -172,4 +172,5 @@ def _reassign(conn: sqlite3.Connection, person_id: int, handle_ids: list[int]) -
                 (row["display_name"], person_id),
             )
         conn.execute("UPDATE tz_period SET person_id = ? WHERE person_id = ?", (person_id, pid))
+        conn.execute("UPDATE tz_suggestion SET person_id = ? WHERE person_id = ?", (person_id, pid))
         conn.execute("DELETE FROM person WHERE id = ?", (pid,))

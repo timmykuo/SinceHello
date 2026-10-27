@@ -138,3 +138,6 @@ class Report(_Strict):
     summary: str | None
     run: RunInfo
     curation: Curation | None = None
+    # Timezone periods the run used beyond the default, per "me" / "them", each with its
+    # source; "inferred" marks an unconfirmed suggestion (SPEC.md §6.1).
+    timezones: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)

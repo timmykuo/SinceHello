@@ -26,7 +26,8 @@ records, manifest = generator.read(Path("evals/samples/bean-goose"))
 ## Layout
 
 - `scenarios/<id>.json`: scenario specs (format below). `bean-goose` has a 12-week
-  Tokyo long-distance era; `noodle-summit` stays in one timezone.
+  Tokyo long-distance era; `noodle-summit` a 7-week San Francisco one, plus a 4-day Dubai
+  trip for Maya that is too short to count as a timezone period (a trap for M7).
 - `generator/`: `offline.py` (deterministic, no API), `llm.py` (optional Claude rewrite
   of filler text), `manifest.py` (ground truth + validation), `scenario.py`, `clock.py`,
   `text.py` (hand-written filler corpus).
@@ -79,7 +80,27 @@ The connector does load each reaction's `reacts_to` link, with a `reaction_kind`
 verb (`Loved` → love, `Laughed at` → laugh, ...). By default it also loads the manifest's true
 `timezones` into the store's `tz_period` table, so stats use each sender's local time. Pass
 `SyntheticConnector(load_timezones=False)` to withhold them when evaluating timezone
-inference (M7).
+inference (M7, below).
+
+## Timezone inference recall (SPEC §6.1)
+
+```sh
+uv run sincehello eval tz                                          # the committed sample
+uv run sincehello eval tz --scenario noodle-summit --seed 1 --seed 2 --messages 6000
+```
+
+Free, no API calls (`tz_recall.py`). It loads a history without its true timezones,
+runs `tz_infer.detect` with "me"'s first zone as the default (the stand-in for the Mac's
+timezone), and scores the suggestions against `manifest.timezones`:
+
+- **Expected**: every period >= 3h from the person's first zone and >= 7 days long. Found
+  when a suggestion for the same person has both boundaries within 14 days (the era
+  tolerance, SPEC §7.2) and an offset within 1h of the true one somewhere in the period.
+  Start and end errors (days) are reported for each.
+- **Traps**: shorter periods >= 3h away (noodle-summit's Dubai trip). Any overlapping
+  suggestion is a trap hit.
+- **False positives**: medium- or high-confidence suggestions overlapping no expected
+  period.
 
 ## `manifest.json`
 

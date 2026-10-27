@@ -23,13 +23,16 @@ a module, and update the spec when a decision changes.
   `@stat(...)` in `stats.py`; keyword-only arguments are the stat's parameters and feed
   its `query_id`. Results must be JSON-serializable and must not depend on the wall clock.
   `eras.py` (SPEC §7.2) and `miners.py` (§7.3) are the interface the agent tools call;
-  keep their signatures stable. Lexicons live in `analysis/lexicon/`.
+  keep their signatures stable. Lexicons live in `analysis/lexicon/`. `tz.py` resolves
+  each person's zone; `tz_infer.py` infers periods from sleep windows (SPEC §6.1) into
+  `tz_suggestion`, which the user confirms with `sincehello tz confirm`.
 - `sincehello/agent/`: the discovery agent (SPEC §7.4–7.5): `tools.py` (tools + strict
   schemas), `loop.py` (the manual loop), `budget.py`, `runlog.py`, `prompts/`. Keep
   `prompts/system.md` free of run-specific text so the cached prefix stays byte-stable.
   `verify/checks.py` has the deterministic insight checks and `verify/critic.py` the LLM
   critic (SPEC §7.6; its prompt `verify/critic.md` is the cached prefix, keep it stable
-  too); `report/schema.py` the `report.json` models.
+  too); `report/schema.py` the `report.json` models. `agent/tz_namer.py` names inferred
+  timezone periods with one Claude call each (prompt `prompts/tz_namer.md`, also stable).
 - `sincehello/curate/`: curation (SPEC §7.7). `rank.curate(report)` fills `deck`; it reads
   only the `Report`, stays deterministic, and runs at the end of every agent run.
 - `tests/`: `fake_anthropic.py` has `ScriptedClient`, the offline stand-in for the API

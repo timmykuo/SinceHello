@@ -1,6 +1,6 @@
 {
   "id": "noodle-summit",
-  "description": "Maya and Jordan in London, same timezone throughout. Planted: Maya texts first and says 'i love you' first, Jordan's pet name 'noodle' from month 3, the meatball summit inside joke, a birthday as the busiest day, a fight over a missed flight, and Maya as the faster replier.",
+  "description": "Maya and Jordan in London. Planted: Maya texts first and says 'i love you' first, Jordan's pet name 'noodle' from month 3, the meatball summit inside joke, a birthday as the busiest day, a fight over a missed flight, Maya as the faster replier, a 7-week San Francisco long-distance stretch for Jordan, and a 4-day Dubai trip for Maya that is too short to count as a timezone period.",
   "start": "2019-09-01",
   "duration_days": 365,
   "target_messages": 6000,
@@ -22,15 +22,25 @@
     }
   },
   "timezones": {
-    "me": [{"start": "2019-09-01T00:00:00Z", "tz": "Europe/London"}],
-    "them": [{"start": "2019-09-01T00:00:00Z", "tz": "Europe/London"}]
+    "me": [
+      {"start": "2019-09-01T00:00:00Z", "tz": "Europe/London"},
+      {"start": "2019-11-01T08:00:00Z", "tz": "Asia/Dubai"},
+      {"start": "2019-11-05T16:00:00Z", "tz": "Europe/London"}
+    ],
+    "them": [
+      {"start": "2019-09-01T00:00:00Z", "tz": "Europe/London"},
+      {"start": "2020-02-09T14:00:00Z", "tz": "America/Los_Angeles"},
+      {"start": "2020-03-29T11:00:00Z", "tz": "Europe/London"}
+    ]
   },
   "eras": [
     {"id": "era_1", "name": "Pub quiz to first dates", "start": "2019-09-01", "volume": 0.8,
      "topics": ["plans", "daily", "food", "work"]},
     {"id": "era_2", "name": "Winter of takeaways", "start": "2019-11-15", "volume": 1.2,
      "topics": ["food", "shows", "daily", "family", "plans"]},
-    {"id": "era_3", "name": "Spring routines", "start": "2020-03-01", "volume": 1.0,
+    {"id": "era_3", "name": "Jordan in San Francisco", "start": "2020-02-09", "volume": 1.2,
+     "topics": ["distance", "distance", "daily", "work", "food"]},
+    {"id": "era_4", "name": "Spring routines", "start": "2020-03-29", "volume": 1.0,
      "topics": ["work", "gym", "daily", "shows", "weekend"]}
   ],
   "initiator_share": {"them": 0.35},
@@ -85,6 +95,13 @@
      "silence_hours": 58,
      "makeup": [["them", "i'm sorry. i should have left earlier. let me make it up to you"],
                 ["me", "ok. i missed you", 120]]},
+    {"id": "san_francisco", "type": "long_distance", "person": "them", "period": 1,
+     "landed": {"offset_h": 2,
+                "script": [["them", "landed in san francisco. it's sunny and i already miss you"],
+                           ["me", "text me when you're at the flat!", 120]]},
+     "reunion": {"offset_h": 3,
+                 "script": [["them", "back in london!! where are you"],
+                            ["me", "on my way to you 🙈", 60]]}},
     {"id": "reply_speed", "type": "reply_speed", "faster": "me"},
     {"id": "texts_first", "type": "texts_first", "sender": "me", "gap_hours": 6}
   ]

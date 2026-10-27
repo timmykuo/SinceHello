@@ -79,6 +79,25 @@ CREATE TABLE tz_period (
     source    TEXT NOT NULL                -- default | user | inferred_confirmed
 );
 
+-- Inferred timezone periods waiting for the user (SPEC.md §6.1). Confirmed ones are
+-- copied into tz_period; ignored ones stay here so they aren't suggested again.
+CREATE TABLE tz_suggestion (
+    id               INTEGER PRIMARY KEY,
+    person_id        INTEGER NOT NULL REFERENCES person(id),
+    kind             TEXT NOT NULL,        -- shift | home
+    start_utc        INTEGER NOT NULL,
+    end_utc          INTEGER,              -- NULL = open-ended
+    utc_offset_hours REAL NOT NULL,        -- the inferred offset
+    iana_tz          TEXT NOT NULL,        -- best guess: a named zone, else Etc/GMT-N
+    confidence       TEXT NOT NULL,        -- high | medium | low
+    score            REAL NOT NULL,
+    place            TEXT,                 -- from naming (sincehello tz infer --name)
+    hint_message_id  TEXT,                 -- "source:source_msg_id" of a travel mention
+    hint_quote       TEXT,
+    details          TEXT NOT NULL DEFAULT '{}',  -- JSON: how it was inferred
+    status           TEXT NOT NULL DEFAULT 'pending'  -- pending | confirmed | ignored
+);
+
 -- Opaque per-connector cursor for incremental ingest (e.g. max chat.db ROWID).
 CREATE TABLE sync_state (
     source     TEXT PRIMARY KEY,
