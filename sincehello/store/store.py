@@ -12,7 +12,7 @@ from pathlib import Path
 
 from sincehello.connectors.base import ConversationRecord, HandleRecord, MessageRecord
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # version -> SQL that upgrades a store from that version to the next one.
 # schema.sql always holds the latest full schema, used for new stores.
@@ -21,6 +21,24 @@ MIGRATIONS = {
         ALTER TABLE message ADD COLUMN reacts_to_source_msg_id TEXT;
         ALTER TABLE message ADD COLUMN reaction_kind TEXT;
         CREATE INDEX message_reacts_to ON message (source, reacts_to_source_msg_id);
+    """,
+    2: """
+        CREATE TABLE tz_suggestion (
+            id               INTEGER PRIMARY KEY,
+            person_id        INTEGER NOT NULL REFERENCES person(id),
+            kind             TEXT NOT NULL,
+            start_utc        INTEGER NOT NULL,
+            end_utc          INTEGER,
+            utc_offset_hours REAL NOT NULL,
+            iana_tz          TEXT NOT NULL,
+            confidence       TEXT NOT NULL,
+            score            REAL NOT NULL,
+            place            TEXT,
+            hint_message_id  TEXT,
+            hint_quote       TEXT,
+            details          TEXT NOT NULL DEFAULT '{}',
+            status           TEXT NOT NULL DEFAULT 'pending'
+        );
     """,
 }
 ME_PERSON_ID = 1
@@ -238,6 +256,47 @@ class Store:
                 ),
             ).lastrowid
 
+    _SUGGESTION_FIELDS = (
+        "kind",
+        "start_utc",
+        "end_utc",
+        "utc_offset_hours",
+        "iana_tz",
+        "confidence",
+        "score",
+        "place",
+        "hint_message_id",
+        "hint_quote",
+        "details",
+        "status",
+    )
+
+    def add_tz_suggestion(self, person_id: int, **fields: object) -> int:
+        """Store an inferred timezone period (SPEC.md §6.1). Times are UTC ms."""
+        cols = [c for c in self._SUGGESTION_FIELDS if c in fields]
+        with self.conn:
+            return self.conn.execute(
+                f"INSERT INTO tz_suggestion (person_id, {', '.join(cols)})"
+                f" VALUES (?, {', '.join('?' * len(cols))})",
+                (person_id, *(fields[c] for c in cols)),
+            ).lastrowid
+
+    def update_tz_suggestion(self, suggestion_id: int, **fields: object) -> None:
+        unknown = set(fields) - set(self._SUGGESTION_FIELDS)
+        if unknown:
+            raise ValueError(f"unknown tz_suggestion fields: {sorted(unknown)}")
+        if not fields:
+            return
+        with self.conn:
+            self.conn.execute(
+                f"UPDATE tz_suggestion SET {', '.join(f'{c} = ?' for c in fields)} WHERE id = ?",
+                (*fields.values(), suggestion_id),
+            )
+
+    def delete_tz_suggestion(self, suggestion_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM tz_suggestion WHERE id = ?", (suggestion_id,))
+
     # --- reads --------------------------------------------------------------
 
     def person_for_handle(self, source: str, raw_value: str) -> int | None:
@@ -250,6 +309,14 @@ class Store:
         return self.conn.execute(
             "SELECT * FROM tz_period WHERE person_id = ? ORDER BY start_utc, id", (person_id,)
         ).fetchall()
+
+    def tz_suggestions(self, person_id: int, status: str | None = None) -> list[sqlite3.Row]:
+        sql = "SELECT * FROM tz_suggestion WHERE person_id = ?"
+        args: list[object] = [person_id]
+        if status is not None:
+            sql += " AND status = ?"
+            args.append(status)
+        return self.conn.execute(sql + " ORDER BY start_utc, id", args).fetchall()
 
     def people(self) -> list[PersonSummary]:
         """Everyone except me, by message count in 1:1 conversations (SPEC.md §1).

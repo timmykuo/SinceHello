@@ -29,7 +29,8 @@ from sincehello.store.store import ME_PERSON_ID
 
 # Bump when a stat's definition or parameter names change, so old query ids no longer match.
 # 2: the top-N parameter is `top_n` everywhere (was `k` in the language stats).
-STATS_VERSION = 2
+# 3: cross_timezone adds `zones`, and per window `sources`, `inferred`, `reunion_message_id`.
+STATS_VERSION = 3
 
 HOUR_MS = 3_600_000
 DAY_MS = 24 * HOUR_MS
@@ -649,12 +650,19 @@ def cross_timezone(
 ) -> tuple[dict[str, Any], list[str]]:
     """Stretches where your timezones differ by >= min_diff_hours for >= min_days.
 
-    For each: the waking-hours overlap, messages sent during the recipient's night, and
-    how long those night messages waited for a reply.
+    For each: the waking-hours overlap, messages sent during the recipient's night, how
+    long those night messages waited for a reply, and the first message after it ends
+    (the reunion). `sources` says where each zone came from; `inferred` marks a window
+    that rests on a timezone the user hasn't confirmed (SPEC.md §6.1). `zones` counts
+    each sender's messages by the zone they were sent from.
     """
     tz = ds.tz
+    zones: dict[str, Counter] = {s: Counter() for s in SENDERS}
+    for m, local in zip(ds.messages, ds.local, strict=True):
+        zones[m.sender][str(local.tzinfo)] += 1
+    by_zone = {s: [{"tz": z, "messages": n} for z, n in c.most_common()] for s, c in zones.items()}
     if not ds.messages or not (tz.has_periods(ME_PERSON_ID) or tz.has_periods(ds.person_id)):
-        return {"windows": []}, ["no_cross_timezone_periods"]
+        return {"windows": [], "zones": by_zone}, ["no_cross_timezone_periods"]
 
     def offset_hours(person: int, ms: int) -> float:
         local = tz.local(person, ms)
@@ -716,6 +724,8 @@ def cross_timezone(
             if nxt is not None and nxt.sender != m.sender:
                 waits[m.sender].append((nxt.sent_at_utc - m.sent_at_utc) / HOUR_MS)
 
+        sources = {ME: tz.source(ME_PERSON_ID, mid), THEM: tz.source(ds.person_id, mid)}
+        after = next((m for m in ds.messages if m.sent_at_utc >= end_ms), None)
         windows.append(
             {
                 "start_date": start_day.isoformat(),
@@ -723,6 +733,9 @@ def cross_timezone(
                 "days": len(run),
                 "me_tz": str(tz.zone(ME_PERSON_ID, mid)),
                 "them_tz": str(tz.zone(ds.person_id, mid)),
+                "sources": sources,
+                "inferred": "inferred" in sources.values(),
+                "reunion_message_id": after.message_id if after else None,
                 "them_ahead_hours": _r(statistics.median(d for _, d in run), 2),
                 "messages": len(msgs),
                 "overlap": overlap,
@@ -732,4 +745,7 @@ def cross_timezone(
                 },
             }
         )
-    return {"windows": windows}, [] if windows else ["no_cross_timezone_periods"]
+    flags = [] if windows else ["no_cross_timezone_periods"]
+    if any(w["inferred"] for w in windows):
+        flags.append("inferred_timezones")
+    return {"windows": windows, "zones": by_zone}, flags

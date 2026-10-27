@@ -210,6 +210,9 @@ message(
 )
 message_fts  -- FTS5 virtual table over message.text (for the search tool)
 tz_period(person_id, start_utc, end_utc NULL, iana_tz, source)  -- source: default | user | inferred_confirmed
+tz_suggestion(person_id, kind, start_utc, end_utc NULL, utc_offset_hours, iana_tz, confidence,
+              score, place, hint_message_id, hint_quote, details, status)
+                                         -- inferred periods (§6.1); status: pending | confirmed | ignored
 ```
 
 Derived tables, all rebuilt per analysis run and cached:
@@ -262,6 +265,75 @@ suggestion is easier than recalling dates.
 
 Known failure modes: shift work, exam all-nighters, and sparse data. Each of these
 gives low confidence, and low-confidence suggestions are never used silently.
+
+Implementation notes (M7):
+
+- **Detection** (`sincehello/analysis/tz_infer.py`, no LLM, no wall clock). Send times are
+  read on the default timezone's clock in half-hour bins; your timeline uses everything
+  you sent in 1:1 chats, theirs what they sent. Each day's 14-day span gives a night: its
+  quietest 5 hours, *strictly*. When one of you is far away, the other also goes quiet
+  while they sleep, so a long-distance span has two quiet stretches; your own night is
+  silent, theirs only sparse (a "good morning" waiting for them), and the strict minimum
+  picks yours. The most common midpoint is the usual night. Each day's shift becomes an
+  absolute UTC offset, so a stay somewhere without daylight saving doesn't split when the
+  default zone changes clocks.
+- **Shift detection.** A candidate is a run of ≥ 7 daily midpoints (the spec's "lasts ≥ 7
+  days") ≥ 3h off, at an offset that stays within 3h, bridging up to 7 days of stray
+  estimates. Boundaries move up to 10 days, to the split that leaves the fewest sends in
+  the wrong night (6-hour nights): the earliest such start and the latest such end. The
+  usual night is a weak witness while away (the person at home sleeps then too), but the
+  hours that are night away and day at home are busy until the traveller leaves and from
+  the moment they're back. The shift is then re-read from where the new night is silent
+  over the period (the far edge of the silent stretch, less 30 min): with nights that
+  overlap, the rolling midpoints understate it. Periods under 7 days or 3h are dropped,
+  pieces of one stay that touch are merged, and a stretch that only echoes the other
+  person's at the same offset is dropped unless both are well supported (a trip
+  together).
+- **Home.** If their usual night sits ≥ 5h from yours, they live elsewhere: a `home`
+  suggestion covers their whole history (high confidence only at ≥ 7h, since a night
+  owl can look like a timezone).
+- **Confidence.** From days, messages per day, coverage (share of the period's days whose
+  own estimate agreed) and silence (how much quieter the new night's hours got than
+  usual, 1 = no sends): high needs ≥ 14 days, ≥ 3 messages/day, coverage ≥ 0.7, silence
+  ≥ 0.8; low is < 1 message/day, coverage < 0.5 or silence < 0.5.
+- **Suggestions** carry the UTC offset, a fixed-offset zone (`Etc/GMT-9` = UTC+9) until
+  named, and a hint: the travel mention ("landed", "flight", "time difference", "i'm
+  home", ...) nearest the start (else the end) within 3 days, the traveller's own first.
+  `sync` stores them in `tz_suggestion` idempotently: a re-detected pending suggestion is
+  updated in place, stale pending ones are removed, and confirmed or ignored ones are
+  never asked again. Anything a `user` or `inferred_confirmed` period already covers is
+  skipped.
+- **Naming** (`sincehello/agent/tz_namer.py`, opt-in `sincehello tz infer --name`): one
+  structured-output call per suggestion rather than an agent loop, since the search is
+  fixed: the messages within 36h of each boundary (up to 30 each) plus travel mentions
+  within 7 days, shown through `ToolContext.show` (egress tool `tz_namer`, written to
+  `~/.sincehello/tz/`). It returns `{notes, place, iana_tz, evidence_message_id, quote}`;
+  code keeps the zone only if it exists and its offset during the period is within 1.5h
+  of the inferred one, and the evidence only if the quote is in a message it was shown.
+  `prompts/tz_namer.md` is the cached prefix; costs go to a `Budget` under `--max-cost`
+  (default $0.25). A named zone survives later re-detection.
+- **Confirm** (`sincehello tz confirm <person>`): one prompt per pending suggestion,
+  medium confidence and up (`--all` adds low), e.g. "Looks like Alex Chen was about 14h
+  ahead of you from Jan 8, 2022 to Apr 7, 2022, UTC+09:00 (Alex Chen said “just landed in
+  tokyo!! …” on Jan 9, 2022). Suggested zone: Asia/Tokyo (Tokyo). Confidence: high."
+  Correct writes a `tz_period` with source `inferred_confirmed`; edit asks for the zone,
+  start and end (default-zone clock) and writes source `user`; ignore marks it ignored.
+- **Unconfirmed use.** `TzResolver` treats a pending high-confidence suggestion as a
+  period with source `inferred` (priority `user` > `inferred_confirmed` > `inferred` >
+  `default`). `analyze` runs `sync` first and says how many periods wait for review.
+  `report.json` `timezones` and `get_overview` list each person's periods with their
+  source, and the `cross_timezone` stat marks windows resting on one as `inferred`.
+- **Recall** (`evals/tz_recall.py`, `sincehello eval tz`, free): on the committed
+  bean-goose sample the Tokyo era is found at UTC+9, high confidence, start 0.2 days
+  early and end 4 days late, with no other suggestion. Over 16 generated histories
+  (bean-goose and noodle-summit, seeds 1–5, 3k–8k lines) every planted stretch is found
+  with boundaries within 14 days (12 of 17 within 7, the end usually the looser one) and
+  the offset within 1h; the 4-day Dubai trip is never suggested. One medium-confidence
+  false positive: a two-week, 3h "shift" around noodle-summit's 58-hour fight silence,
+  which moves the quiet window (seed 4, 6k lines). Known limit: a move of
+  ~5h or less, whose night overlaps the other person's, isn't separable from 1:1 sends
+  when the traveller rarely texts while the other sleeps; the midpoints shift by under
+  3h and nothing is suggested.
 
 **Cross-timezone insights only fire when a period differs by ≥ 3h for ≥ 4 weeks.**
 For most pairs who live in the same place, this whole feature stays invisible. It
@@ -333,10 +405,14 @@ Implementation notes (`sincehello/analysis/`, M2):
     phrase is dropped when a longer kept phrase explains ≥ 80% of its uses.
   - Cross-timezone windows: runs of ≥ 28 days where the two people's UTC offsets (sampled
     daily at noon UTC) differ by ≥ 3h. Each reports the waking-hours overlap (08–23 local),
-    messages sent during the recipient's night (23–07), and the median wait for a reply to
-    those night messages.
-- Timezones resolve through `tz_period`: when periods overlap, `user` beats
-  `inferred_confirmed` beats `default`, then the later start wins. With no period, the
+    messages sent during the recipient's night (23–07), the median wait for a reply to
+    those night messages, the first message after it (`reunion_message_id`), each zone's
+    `sources`, and `inferred` when one is an unconfirmed suggestion (flag
+    `inferred_timezones`). `zones` counts each sender's messages by the zone they were
+    sent from ("you texted from 4 timezones"). `STATS_VERSION` 3.
+- Timezones resolve through `tz_period` plus pending high-confidence `tz_suggestion`s
+  (source `inferred`, §6.1): when periods overlap, `user` beats `inferred_confirmed`
+  beats `inferred` beats `default`, then the later start wins. With no period, the
   default is `SINCEHELLO_TZ`, else the machine's timezone, else UTC.
 
 ### 7.2 Era detection (local)
@@ -387,7 +463,8 @@ Implementation notes (`sincehello/analysis/eras.py`, M2):
   bean-goose sample finds all 5 boundaries with no spurious ones, including the Tokyo
   stretch (start off by 1 day; the end is 6 days early because the last era is shorter
   than `min_weeks`). On 6 held-out histories (bean-goose and noodle-summit, other seeds,
-  3k–10k messages): recall 0.90, precision 0.90.
+  3k–10k messages): recall 0.90, precision 0.90 (measured before noodle-summit gained its
+  San Francisco era in M7).
 
 ### 7.3 Candidate miners (local, cheap)
 
@@ -701,7 +778,9 @@ Implementation notes (`sincehello/curate/rank.py`, M6):
 
 Top-level `report.json` fields: `person`, `range`, `sources`, `deck[]` (ordered insight
 ids, filled by curation, §7.7), `curation{verified, min_cards, max_cards, scores{},
-dropped{}}`, `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text), and
+dropped{}}`, `insights[]`, `eras[]`, `stats{}`, `summary` (the agent's `finish` text),
+`timezones{me, them}` (each person's periods beyond the default, with `source`;
+`inferred` = unconfirmed, §6.1), and
 `run{run_id, status, cost_usd, tokens, turns, messages_shared, pct_shared, model, effort,
 version, critic_calls, critic_cost_usd}` (critic spend is included in `cost_usd`). Pydantic models live in `sincehello/report/schema.py`.
 
@@ -764,7 +843,10 @@ partial report once the projected spend crosses it. The cost-per-run is recorded
   by era, with planted lines locked, so ground truth is identical either way and tests
   never need an API key. Scenarios are JSON in `evals/scenarios/`; each history is a
   directory with `messages.jsonl` and `manifest.json` (planted facts with exact message
-  ids, dates, senders, counts). Histories include group-chat and reaction traps (an
+  ids, dates, senders, counts). Both scenarios plant a long-distance era (bean-goose: 12
+  weeks in Tokyo; noodle-summit: 7 weeks in San Francisco) and noodle-summit a 4-day trip
+  too short to count; `sincehello eval tz` scores timezone inference against them (§6.1).
+  Histories include group-chat and reaction traps (an
   earlier "love you" only in the group chat, reactions quoting planted phrases) and
   near-miss decoys. Format and definitions: `evals/README.md`.
 - **Metrics:**
@@ -883,6 +965,12 @@ sincehello eval rate <run> [--all]          # M6: human rating pass (ratings.jso
 sincehello eval agreement <run>...          # M6: judge vs. your ratings, no API calls
 sincehello eval judge-calibration [--max-cost 1]  # M6: judge vs. labelled insights
 sincehello eval compare <a> <b> [--pairwise]      # M6: two runs side by side
+sincehello tz show <person>                 # M7: timezone periods and pending suggestions
+sincehello tz infer <person> [--name --max-cost 0.25] [--json]
+                                   # sleep-window shift detection (local); --name asks
+                                   # Claude to name each place
+sincehello tz confirm <person> [--all]      # correct / edit / ignore each suggestion
+sincehello eval tz [--sample S | --scenario X --seed N]  # M7: recall of planted periods
 ```
 
 The later TypeScript UI is a front end for these same commands and the
@@ -955,6 +1043,12 @@ is pure Python; see §7.2 for why not `ruptures`).
    `judge.md` until agreement holds (§10.3).
 7. **M7 — Timezone inference:** sleep-window shift detection, agent naming, confirm
    flow, cross-timezone insights. Synthetic scenarios get a planted long-distance era.
+   *Done* (§6.1): `tz_infer` detection and `tz_suggestion` (schema v3), `sincehello tz
+   infer / confirm / show`, opt-in naming with one Claude call per period, pending
+   high-confidence periods used as `inferred` and labeled in `report.json`, the overview
+   and `cross_timezone`; noodle-summit gained a San Francisco era and a short-trip trap,
+   and `sincehello eval tz` scores recall. *Still to do:* run naming on real data, and
+   decide whether moves of ≤ 5h need another signal (§6.1, known limit).
 8. **M8 — Iterate:** tune prompts, effort, and tools against the evals.
 9. **Later:** AddressBook contacts (names in `sincehello people`, merges for handles on the
    same contact card; §4.2), guided connectors (Instagram, Messenger, WhatsApp), TypeScript story-card UI,

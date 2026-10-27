@@ -87,9 +87,10 @@ def test_migrates_v1_store(tmp_path):
     path = tmp_path / "old.db"
     with Store(path) as s:
         FakeConnector(messages=default_messages()[:3]).ingest(s)
-        # Turn this into a v1 store: no reaction columns.
+        # Turn this into a v1 store: no reaction columns, no tz_suggestion.
         s.conn.executescript(
             """
+            DROP TABLE tz_suggestion;
             DROP INDEX message_reacts_to;
             ALTER TABLE message DROP COLUMN reacts_to_source_msg_id;
             ALTER TABLE message DROP COLUMN reaction_kind;
@@ -102,6 +103,26 @@ def test_migrates_v1_store(tmp_path):
         s.set_cursor("fake", "0")
         FakeConnector().ingest(s)
         assert s.reactions_to("fake", "3")[0]["reaction_kind"] == "love"
+
+
+def test_migrates_v2_store(tmp_path):
+    path = tmp_path / "v2.db"
+    with Store(path) as s:
+        FakeConnector(messages=default_messages()[:3]).ingest(s)
+        s.conn.executescript("DROP TABLE tz_suggestion; PRAGMA user_version = 2;")
+    with Store(path) as s:
+        assert s.conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        sid = s.add_tz_suggestion(
+            1,
+            kind="shift",
+            start_utc=0,
+            end_utc=None,
+            utc_offset_hours=9.0,
+            iana_tz="Etc/GMT-9",
+            confidence="high",
+            score=0.9,
+        )
+        assert s.tz_suggestions(1, "pending")[0]["id"] == sid
 
 
 def test_newer_schema_rejected(tmp_path):

@@ -135,6 +135,9 @@ def test_full_run_with_parallel_calls_and_a_corrected_insight(bean_goose, tmp_pa
     assert [categories[i] for i in report["deck"]] == ["milestone", "language"]
     assert report["curation"]["dropped"] == {}
     assert report["insights"][0]["verification"]["deterministic"] == "pass"
+    # The timezone periods the run used, with their source (SPEC.md §6.1).
+    assert [p["tz"] for p in report["timezones"]["them"]][1] == "Asia/Tokyo"
+    assert report["timezones"]["me"][0]["source"] == "user"
     assert result.cost_usd > 0
     assert report["run"]["cost_usd"] == pytest.approx(result.cost_usd, abs=1e-6)
     egress = json.loads((out / "egress.json").read_text())

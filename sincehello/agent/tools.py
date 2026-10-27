@@ -118,6 +118,15 @@ def get_overview(ctx: ToolContext) -> dict[str, Any]:
     }
     eras = _eras(ctx)
     out["eras"] = [e.to_dict() for e in eras] if eras is not None else "not available yet"
+    # Timezone periods (SPEC.md §6.1), with where each came from; "inferred" ones are
+    # unconfirmed. Only when there are any, and then the cross-timezone windows too.
+    timezones = ctx.timezones()
+    if timezones:
+        out["timezones"] = timezones
+        r = compute(ctx.store, ctx.person_id, "cross_timezone", {"default_tz": ctx.default_tz})
+        ctx.register(r.query_id, "stat", r.to_dict(), r.value)
+        ctx.note_ids(r.value, "get_overview")
+        out["stats"]["cross_timezone"] = {"query_id": r.query_id, "value": r.value}
     return out
 
 

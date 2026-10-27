@@ -80,6 +80,18 @@ def test_tool_definitions_are_strict_and_stable():
             assert set(obj["required"]) <= set(obj["properties"])
 
 
+def test_overview_shows_timezones_when_there_are_any(agent):
+    ctx, call = agent
+    _, out = call("get_overview")
+    # The sample loads its true timezones as user periods: Alex's Tokyo winter.
+    them = out["timezones"]["them"]
+    assert [p["tz"] for p in them] == ["America/New_York", "Asia/Tokyo", "America/New_York"]
+    assert {p["source"] for p in them} == {"user"}
+    (w,) = out["stats"]["cross_timezone"]["value"]["windows"]
+    assert w["them_tz"] == "Asia/Tokyo" and w["inferred"] is False
+    assert out["stats"]["cross_timezone"]["query_id"] in ctx.queries
+
+
 def test_overview(agent):
     ctx, call = agent
     err, out = call("get_overview")
